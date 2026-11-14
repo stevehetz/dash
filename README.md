@@ -50,6 +50,9 @@ The dashboard is a dark-themed, mobile-friendly single-page app served directly 
 | **Health** | Lab results and vitals plotted over time, with reference-range bands that flag out-of-range values. |
 | **System** | Live configuration editing and a one-click service restart. |
 
+![Nutrition page: food database with daily min, target and max rows, and a running total for the selected meal cycle](docs/images/nutrition-food.png)
+*The Nutrition page. Describe a food or add a photo, and Dash fills in the nutrients. Each food is tracked against daily minimum, target and maximum values.*
+
 ---
 
 ## Other Ways to Talk to Dash
