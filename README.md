@@ -1,199 +1,127 @@
-# Steve's Assistant
+# Dash
 
-A personal Telegram bot powered by Claude that manages Dropbox files, Google Drive/Docs/Sheets/Calendar/Tasks, Apple Notes, and web browsing — all from Telegram or your Apple Watch via Siri.
+**A self-hosted personal AI assistant running on a Mac mini.**
 
-## How it works
+Dash is an always-on assistant that I built and run at home. It pairs an LLM agent with a set of tool integrations: files, banking, scheduled jobs, a headless browser, a printer and more. You can reach it from a web dashboard, from Telegram, or by voice ("Hey Dash").
+
+![Dash web dashboard](docs/images/dashboard-home.png)
+
+---
+
+## Highlights
+
+- **One agent, several interfaces.** The web app, Telegram, room microphones and an iPhone or MacBook voice client all share the same agent and the same tools.
+- **Tool-using LLM agent.** Dash has about 30 tools across 7 plugin-style providers. The agent chooses which tools to call to finish a request.
+- **Human-in-the-loop edits.** When the AI proposes changes to nutrition data or files, it shows them as a reviewable diff. Nothing is written until I approve it.
+- **Self-hosted and private.** Dash runs on my own hardware under pm2, and the dashboard is only reachable over my Tailscale network. My personal data never goes to a third-party host.
+- **Installable PWA.** The dashboard can be installed on a phone and supports push notifications.
+
+---
+
+## AI Integrations
+
+AI is built into every layer of Dash, not added as a single chat box.
+
+| Integration | How it's used |
+|---|---|
+| **Agentic LLM core** | Every request runs through an LLM agent (OpenAI Codex) that plans its steps and calls Dash's tools to complete multi-step tasks. Recent conversation is replayed to keep context between turns. |
+| **Vision: nutrition from photos** | Upload a photo of a nutrition label or a meal, and the model pulls out a full nutrient profile for review before it is saved. |
+| **AI-assisted data editing** | "Ask Dash" works on the Nutrition, Meal Log and Library pages. It answers questions about the data on screen or proposes changes, shown as a diff that I approve before anything is written. |
+| **Meal planning against targets** | The agent balances daily food logs against nutrient minimums, maximums and goals, and suggests changes. |
+| **Autonomous scheduled agents** | Jobs are plain-language prompts that the agent runs on a schedule with no one present, for example morning briefings and recurring reports. |
+| **Sub-agent delegation** | Heavy research tasks are handed to a fresh agent session so the main conversation stays focused. |
+| **Speech to text** | **Whisper** transcribes voice commands on the machine itself. |
+| **Custom wake word** | An always-listening **"Hey Dash"** wake word, using a custom **Picovoice Porcupine** model, that runs entirely on the machine. I first trained my own detector (synthetic speech samples, a small neural network exported to ONNX; see `voice/train_hey_dash.py`), then switched to Porcupine because it detected the wake word more reliably. |
+| **Voice-optimized replies** | A second, lightweight LLM pass rewrites the agent's answer into short, natural speech before it is spoken aloud. |
+| **AI developer tooling** | A read-only **MCP server** gives AI coding agents access to service health, logs and error scans while they work on the codebase. |
+
+---
+
+## The Web Dashboard
+
+The dashboard is a dark-themed, mobile-friendly single-page app served directly by Dash. Each card on the home screen opens one area:
+
+| Page | What it does |
+|---|---|
+| **Nutrition** | A food database with full nutrient profiles, reusable meal groups, and daily food logs tracked against nutrient targets. You can describe a food or **upload a photo of a label**, and Dash looks up the nutrition facts for you to review before saving. |
+| **Finances** | Account balances and an income and expense summary from linked bank accounts, using **Plaid**. |
+| **Jobs** | A scheduler for recurring prompts, for example "every weekday at 7am, summarize my calendar." You can create, edit, toggle and delete jobs inline, and run status streams live to the page. |
+| **Library** | A file browser for my notes vault, with viewers for Markdown, JSON, PDFs and images, plus an in-place editor. **Ask Dash** answers questions about the open file or proposes edits to it. |
+| **Health** | Lab results and vitals plotted over time, with reference-range bands that flag out-of-range values. |
+| **System** | Live configuration editing and a one-click service restart. |
+
+---
+
+## Other Ways to Talk to Dash
+
+- **Telegram:** a chat interface locked to a single user ID. It accepts photos and documents, for example "print this" or "save this image."
+- **Voice:** each room has a microphone listening for a custom **"Hey Dash"** wake word (Picovoice Porcupine). Speech is transcribed with **Whisper**, and the reply is spoken back on the speaker in the same room.
+- **Remote voice:** lightweight clients for iPhone and MacBook send requests to the same agent over the tailnet.
+
+---
+
+## What the Agent Can Do
+
+| Provider | Capabilities |
+|---|---|
+| **Files** | Read, write, append to and organize notes; save images that come in from chat |
+| **Banking** | Check balances, list transactions and search them (Plaid) |
+| **Scheduled jobs** | Create, list, toggle and remove recurring tasks by asking in plain language |
+| **Web browser** | Drive headless Chrome (Puppeteer) to navigate pages, click, fill forms and extract content |
+| **Printer** | Print text, files or attachments received in chat |
+| **Sub-agents** | Hand heavy research tasks off to a fresh agent session |
+
+Additional integrations include Google Calendar, Drive, Docs, Sheets and Tasks, Gmail, Apple Notes, Oura, weather, and email sending through Resend.
+
+---
+
+## Architecture
 
 ```
-You (Telegram / Apple Watch via Siri → Apple Notes)
-  → This Node.js app (runs on your Mac via pm2)
-    → Claude API (interprets your request, calls tools)
-      → Dropbox, Google APIs, Apple Notes, Web
+  Web dashboard (PWA)   Telegram   "Hey Dash" voice   iPhone / MacBook
+           \               |              |               /
+            └──────── bot.js  (Node.js HTTP + bot server) ┘
+                               │
+                      src/agent.js  (LLM agent)
+                               │
+                    tools.js  →  src/tools/<provider>/skill.js
+                               │
+        Files · Plaid · Jobs · Browser · Printer · Google · …
 ```
 
-## Setup (10 minutes)
+- **Runtime:** Node.js (ES modules) under **pm2** on a Mac mini that is always on
+- **Agent:** an LLM agent with a dynamic tool roster in its system prompt. Full tool schemas are loaded only when needed, which keeps prompts small.
+- **Tool providers:** plugins discovered automatically from `src/tools/*/skill.js`. Adding a capability means adding one module.
+- **Frontend:** plain HTML, CSS and JavaScript with no framework or build step, plus a service worker for push notifications
+- **Voice:** Python (Porcupine wake word, Whisper speech-to-text, macOS text-to-speech) with one listener thread per room
+- **Networking:** Tailscale Serve, so the dashboard is private to my tailnet. Any caller that isn't on the machine itself must send a shared-secret header.
+- **Secrets:** kept out of the repo and synced into place at startup
 
-### 1. Create a Telegram Bot
+---
 
-1. Open Telegram and search for **@BotFather**
-2. Send `/newbot` and follow the prompts (name it whatever you want)
-3. Copy the **bot token** it gives you
+## Tech Stack
 
-### 2. Get your Telegram User ID
+`Node.js` · `JavaScript` · `Python` · `LLM agents / tool use` · `OpenAI Codex` · `Vision models` · `MCP` · `Plaid API` · `Google APIs` · `Puppeteer` · `Telegram Bot API` · `Whisper` · `Picovoice Porcupine` · `Web Push / PWA` · `Tailscale` · `pm2` · `macOS`
 
-1. Search for **@userinfobot** on Telegram
-2. Send it `/start`
-3. Copy your **numeric user ID** (this locks the bot to only respond to you)
+---
 
-### 3. Get an Anthropic API Key
-
-1. Go to [console.anthropic.com](https://console.anthropic.com)
-2. Create an account and add a payment method
-3. Generate an API key
-
-### 4. Configure the bot
-
-```bash
-cd dash
-cp config/.env.example config/.env
-```
-
-Edit `config/.env` with your values:
-
-```
-ANTHROPIC_API_KEY=sk-ant-your-key-here
-TELEGRAM_BOT_TOKEN=your-bot-token-here
-ALLOWED_USER_ID=your-numeric-id
-DROPBOX_PATH=/Users/yourname/Dropbox
-CODEX_MODEL=<optional-codex-model-id>
-```
-
-### 5. Install and run
+## Running It
 
 ```bash
 npm install
-pm2 start index.js --name steves-assistant
-pm2 save
+cp config/.env.example config/.env   # fill in the keys you need
+npm run dev                          # bot + web app with --watch
 ```
 
-That's it. Open Telegram, find your bot, and start chatting.
-
-## Capabilities
-
-| Feature | Examples |
-|---|---|
-| **Dropbox files** | "Create a todo list", "Read my grocery list", "Add salmon to the food log" |
-| **Google Drive/Docs/Sheets** | "Create a spreadsheet with banana nutrition facts", "Make a Google Doc" |
-| **Google Calendar** | "What's on my calendar today?", "Create an event for Friday at 3pm" |
-| **Google Tasks** | "Show my tasks", "Add a task to pick up groceries" |
-| **Apple Notes** | "Check my apple notes", "Read my apple note about the trip" |
-| **Web browsing** | "Search for V60 brew ratios", "What's the weather in Macedonia?" |
-| **Apple Watch (via Siri)** | Dictate an Apple Note → auto-processed and sent to Telegram |
-
-## Commands
-
-- `/start` — Show help
-- `/clear` — Reset conversation history
-- `/folders` — Show your Dropbox folder structure
-- `/haiku` — Switch to Haiku
-- `/sonnet` — Switch to Sonnet (default)
-- `/opus` — Switch to Opus
-
-## Google Integration (optional)
-
-Adds Google Drive, Docs, Sheets, Calendar, and Tasks access to the bot. Uses OAuth2 so the bot acts as your Google account directly.
-
-### 1. Create a Google Cloud Project
-
-1. Go to [console.cloud.google.com](https://console.cloud.google.com)
-2. Click **Select a project** > **New Project**, name it (e.g., `steves-assistant`), and create it
-
-### 2. Enable APIs
-
-Go to **APIs & Services > Library** and enable all five:
-
-- Google Drive API
-- Google Docs API
-- Google Sheets API
-- Google Calendar API
-- Google Tasks API
-
-### 3. Set up OAuth consent screen
-
-1. Go to **Google Auth Platform > Branding** and fill in the app name and your email
-2. Go to **Google Auth Platform > Audience** and add your Gmail address as a test user
-
-### 4. Create OAuth credentials
-
-1. Go to **Google Auth Platform > Clients**
-2. Click **Create OAuth client**
-3. Application type: **Desktop app**
-4. Name it (e.g., `steves-assistant`)
-5. Click **Create**
-6. Download the JSON and save it as `google-credentials.json` in this project's root directory (already gitignored)
-
-### 5. Configure environment variables
-
-Add to your `.env`:
-
-```
-GOOGLE_CREDENTIALS_PATH=./google-credentials.json
-GOOGLE_DRIVE_ROOT_FOLDER_ID=your-folder-id-here
-```
-
-To get the folder ID, open the folder in Google Drive — the URL looks like `https://drive.google.com/drive/folders/FOLDER_ID_HERE`.
-
-### 6. Authorize on first run
-
-Start the bot with `node index.js`. It will print a URL — open it in your browser, sign in with your Google account, and approve access. The token is saved to `google-token.json` and refreshes automatically. You only need to do this once.
-
-### What you get
-
-| Service | Tools |
-|---------|-------|
-| Drive | List files, search, get file info, create folders |
-| Docs | Read, create, append to documents |
-| Sheets | Read, create, append rows to spreadsheets |
-| Calendar | List/search events, create events, delete events |
-| Tasks | List task lists, list/create/complete/delete tasks |
-
-## Managing with pm2
-
-The bot runs as a background service via pm2 and auto-starts on boot.
-
-| Command | What it does |
-|---|---|
-| `pm2 logs` | Tail logs in real-time |
-| `pm2 logs --lines 100` | Show last 100 log lines |
-| `pm2 restart steves-assistant` | Restart the bot |
-| `pm2 stop steves-assistant` | Stop the bot |
-| `pm2 start steves-assistant` | Start the bot |
-| `pm2 status` | Quick health check |
-| `pm2 monit` | Full dashboard (CPU/memory/logs) |
-
-### First-time setup
+To run it in production on the Mac mini:
 
 ```bash
-npm install -g pm2
-pm2 start index.js --name steves-assistant
-pm2 startup   # prints a sudo command — run it to enable boot persistence
-pm2 save      # saves the process list so it survives reboots
+npm run pm2:start     # starts dash-bot and the Tailscale serve process
+npm run pm2:logs      # tail logs
 ```
 
-### Auto-start on boot
+The dashboard is served on port `3001`. More operational detail is in [`docs/`](docs/): Mac boot setup, the voice system, and the iPhone and MacBook voice clients.
 
-`pm2 startup` installs a macOS launchd service at `~/Library/LaunchAgents/pm2.stevehetz.plist` that launches pm2 when you log in. `pm2 save` snapshots your running processes so pm2 knows to restart `steves-assistant` automatically. If you ever need to redo this:
+## Built With AI Coding Agents
 
-```bash
-pm2 unstartup    # remove the old launchd service
-pm2 startup      # run the printed sudo command
-pm2 save         # re-save the process list
-```
-
-### After code changes
-
-```bash
-pm2 restart steves-assistant
-```
-
-## Apple Watch Integration
-
-The bot polls Apple Notes every 10 seconds. Create a note (via Siri: "Create an Apple Note that says...") and the bot will:
-1. Read the note content
-2. Process it as a prompt (create calendar events, save files, etc.)
-3. Send the result to your Telegram chat
-4. Delete the note
-
-## Security Notes
-
-- The bot **only responds to your Telegram user ID** — all other messages are silently ignored.
-- File access is **sandboxed to your Dropbox folder** — Claude cannot read or write anywhere else on your system.
-- Conversation history is kept in memory (last 20 messages) and resets when the process restarts.
-- Secrets live in `config/.env` (gitignored) and never leave your machine.
-- The HTTP server (port 3001) trusts loopback only; any other caller must send `X-Dash-Token` matching `DASH_HTTP_TOKEN`.
-
-## Customization
-
-- **System prompt**: Edit `BASE_SYSTEM_PROMPT` in `agent.js`
-- **File shortcuts and conventions**: Edit `AGENTS.MD` in your Dropbox
-- **Codex model**: Optionally set `CODEX_MODEL` in `config/.env`; otherwise Codex uses its configured default
+Dash is developed alongside AI coding agents. [`AGENTS.md`](AGENTS.md) and [`.agents/`](.agents/) hold the project's architecture notes, conventions and workflows, so any agent (Claude Code, Codex, Copilot) can contribute safely.
