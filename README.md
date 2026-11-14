@@ -74,7 +74,24 @@ The dashboard is a dark-themed, mobile-friendly single-page app served directly 
 | **Printer** | Print text, files or attachments received in chat |
 | **Sub-agents** | Hand heavy research tasks off to a fresh agent session |
 
-Additional integrations include Google Calendar, Drive, Docs, Sheets and Tasks, Gmail, Apple Notes, Oura, weather, and email sending through Resend.
+---
+
+## Retired Integrations
+
+Dash has been in daily use since March 2026, and its feature set has changed with it. Adding a tool provider is cheap because providers are plug-in modules, so I built many integrations, used them day to day, and **removed the ones that didn't earn their place**. That keeps the agent's tool list small and focused.
+
+| Integration | What it did | Active |
+|---|---|---|
+| **Calendars** (Google Calendar, Apple Calendar) | Listed, searched, created and deleted events by asking in plain language | Mar – Sep 2026 |
+| **Apple Reminders & Notes** | Created reminders and notes, polled reminders into the dashboard, and turned Siri-dictated notes from Apple Watch into agent requests | Mar – Sep 2026 |
+| **Fitness** (Apple Health via Health Auto Export, StreamFit CrossFit, Oura Ring) | A webhook brought in workouts and runs, plus CrossFit history and sleep data. A unified Fitness page and an AI workout assistant summarized training and fed a daily review. | Apr – Sep 2026 |
+| **Email** (Gmail, plus a dedicated agent inbox) | Read, searched, triaged and sent email from personal and assistant accounts, with an AI email assistant in the dashboard | Mar – Sep 2026 |
+| **Google Workspace** (Drive, Docs, Sheets, Tasks) | Created and edited documents and spreadsheets, and managed task lists | Mar – Sep 2026 |
+| **Desktop control** | Operated the Mac directly from screenshots (click, type, scroll, open apps) | Mar – Aug 2026 |
+| **Long-term memory** | Saved and recalled facts between conversations. Replaced by a single standing-instructions file. | Mar – Aug 2026 |
+| **SMS, web search, weather** | Text messages through Twilio, web search and fetch, and current weather and forecasts | Mar – Sep 2026 |
+
+All of this remains in the project's git history.
 
 ---
 
