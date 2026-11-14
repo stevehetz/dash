@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash",
+      "Read",
+      "Edit",
+      "Write",
+      "WebSearch",
+      "WebFetch",
+      "Skill(update-config:*)",
+      "Skill(schedule)",
+      "Skill(claude-api)",
+      "Skill(claude-api:*)",
+      "mcp__dash-dev__pm2_status",
+      "mcp__dash-dev__bot_logs",
+      "mcp__dash-dev__restart_bot",
+      "mcp__dash-dev__recent_errors"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "dash-dev"
+  ]
+}

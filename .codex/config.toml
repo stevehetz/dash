@@ -1,0 +1,15 @@
+# Project-level Codex config — committed so it travels with the repo.
+# MCP servers Codex should launch when working in this project.
+
+[mcp_servers.dash-dev]
+command = "npm"
+args = ["run", "-s", "ai:mcp:dash-dev"]
+
+# Runtime tools for Dash's non-interactive Codex CLI conversations.
+[mcp_servers.dash]
+command = "node"
+args = ["src/llm/dash-mcp-server.js"]
+
+# Gate the one destructive tool: require explicit approval before it can restart a process.
+[mcp_servers.dash-dev.tools.restart_bot]
+approval_mode = "approve"

@@ -1,0 +1,10 @@
+{
+  "servers": {
+    "dash-dev": {
+      "type": "stdio",
+      "command": "npm",
+      "args": ["run", "-s", "ai:mcp:dash-dev"],
+      "cwd": "${workspaceFolder}"
+    }
+  }
+}

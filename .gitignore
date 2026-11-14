@@ -1,0 +1,23 @@
+node_modules/
+.DS_Store
+jobs.lock
+voice/venv/
+voice/training_data/
+logs/
+__pycache__/
+config/google-token.json
+config/google-token-dashbot.json
+config/google-token-personal.json
+config/google-token-professional.json
+config/streamfit.json
+*.crt
+*.keynotes
+data/
+# secrets (real files live in Dropbox/secret/dash, symlinked here)
+config/.env
+config/google-credentials.json
+config/google-token-personal.json.dead-20260611
+config/health-auto-export.json
+scripts/plaid-cert.pem
+scripts/plaid-key.pem
+*.key

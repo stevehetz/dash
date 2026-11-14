@@ -1,0 +1,37 @@
+{
+  "name": "dash",
+  "version": "1.0.0",
+  "description": "Personal Telegram bot that uses Claude to manage Dropbox markdown files",
+  "main": "bot.js",
+  "type": "module",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "node --watch bot.js",
+    "pm2:boot": "pm2 kill && pm2 start ecosystem.config.cjs && pm2 save",
+    "pm2:start": "pm2 start ecosystem.config.cjs",
+    "pm2:restart": "pm2 restart ecosystem.config.cjs",
+    "pm2:restart:dash": "pm2 restart dash-bot",
+    "pm2:stop": "pm2 stop ecosystem.config.cjs",
+    "pm2:logs": "pm2 logs",
+    "pm2:status": "pm2 status",
+    "pm2:monit": "pm2 monit",
+    "mbp": ".venv/bin/python -u voice/mbp_agent.py",
+    "mbp:airpods": ".venv/bin/python -u voice/mbp_agent.py AirPods",
+    "mbp:devices": ".venv/bin/python voice/mbp_agent.py --list-devices",
+    "ai:mcp:dash-dev": "node mcp/dash-dev/server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.28.0",
+    "cheerio": "^1.2.0",
+    "dotenv": "^16.4.7",
+    "plaid": "^41.4.0",
+    "puppeteer": "^24.40.0",
+    "resend": "^6.9.4",
+    "rrule": "^2.8.1",
+    "telegraf": "^4.16.3",
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

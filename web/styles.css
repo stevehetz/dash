@@ -1,0 +1,3209 @@
+:root {
+  --bg: #0b0d10;
+  --card: #15191f;
+  --card-2: #1c2129;
+  --border: #262d38;
+  --text: #e6e9ef;
+  --muted: #8a94a6;
+  /* Between --text and --muted: subordinate to a heading but still meant to be
+     read closely — the nested rows of numbers in the nutrient tables. */
+  --text-2: #ccd3e0;
+  /* The nutrient tables' column rules. They repeat ~46 times across a row, so
+     they sit below --border — but not so far below that they disappear. */
+  --grid: #3d4655;
+  /* Where a pinned column meets the scrolling ones — a step above --grid. */
+  --grid-strong: #4f5a6d;
+  /* The rules boxing in the hovered row and column. Teal — clear of every
+     colour the rows themselves use (accent blue, purple, yellow, orange), so a
+     lit rule is never mistaken for a flagged figure. Muted rather than full
+     strength: it only ever renders a hairline, which needs to be findable
+     without turning the grid into a highlight. */
+  --grid-hover: #40b8ab;
+  /* The fill under the hovered row and column. Well under --card, which is the
+     lowest the table's own surfaces go — the crosshair sinks towards the page
+     behind it rather than lighting up, leaving the teal rules to do the
+     pointing. It has to clear --row-sunken too, or a hovered group row in a
+     food log would be indistinguishable from an idle one. */
+  --row-hover: #11151b;
+  /* A band for the group rows inside a day, a shade under the table's own
+     surface so the group reads without a rule around it. */
+  --row-sunken: #171b21;
+  /* --muted dimmed further, as a flat colour so it can't wash out a background. */
+  --muted-dim: #4e5561;
+  --accent: #5aa9ff;
+  /* The same blue either side of --accent, for the daily min and max rows in
+     the food table. Both still clear the 4.5:1 contrast line against --bg. */
+  --accent-light: #a9d0ff;
+  --accent-deep: #2b7fd4;
+  --accent-soft: #1f3a5c;
+  --sidebar-w: 232px;
+  /* Collapsed at desktop widths the sidebar keeps its icons — wide enough for
+     a 20px glyph in the same 10px-radius pill the expanded rows use. */
+  --sidebar-rail-w: 60px;
+  --green: #4ade80;
+  --amber: #fbbf24;
+  /* A day short of its daily min, and a day past its daily max. Far enough
+     apart in hue to be told apart in neighbouring columns, which --amber and an
+     orange next to it were not. */
+  --yellow: #facc15;
+  --orange: #fb923c;
+  --purple: #c084fc;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+/* App shell: body is a flex column, <main> becomes the ONLY scroll container.
+   This keeps the sticky header/panel/tabs completely outside any scrolling
+   context, which avoids iOS WebKit repaint bugs on tab swap. */
+html, body {
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Title, then the page's own tabs, then status. The tabs ask for 240px before
+   they'll share a line; below that the header wraps and they drop to a second
+   row — which is how they looked when they were their own bar. */
+header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  row-gap: 0.35rem;
+  column-gap: 0.75rem;
+  padding: 0.75rem 1.25rem;
+  padding-top: max(0.75rem, env(safe-area-inset-top));
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.brand-logo {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* The logo is a link home, so it's a button — stripped back to the image (or,
+   in the sidebar, the image and the wordmark) it wraps. */
+.brand-home {
+  display: flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .brand-home:hover .brand-logo { border-color: var(--accent); }
+}
+
+header h1 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.status {
+  font-size: 0.75rem;
+  color: var(--muted);
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  background: var(--card);
+  border: 1px solid var(--border);
+}
+.status.live { color: var(--green); border-color: #1f3d2a; background: #0f1d14; }
+.status.error { color: #f87171; border-color: #3d1f1f; background: #1d0f0f; }
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  /* Always the far right, whether or not the tabs wrapped onto this line. */
+  margin-left: auto;
+}
+
+
+
+main {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  width: 100%;
+  padding: 1rem 1rem 4rem;
+}
+main > * {
+  max-width: 1100px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.tab-panel {
+  display: block;
+}
+.tab-panel[hidden] { display: none; }
+
+/* Tabs wrapper — scrollable, with right-side scroll hint arrow. It lives in the
+   header now, so it takes the room left beside the title and never the whole
+   width; the header's own border is the one under it. */
+.tabs-wrap {
+  position: relative;
+  flex: 1 1 240px;
+  min-width: 0;
+  background: var(--bg);
+}
+.tabs {
+  padding: 0;
+  display: flex;
+  gap: 0.4rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior: contain;
+  touch-action: pan-x;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+  white-space: nowrap;
+}
+.tab { flex-shrink: 0; }
+.tabs::-webkit-scrollbar { display: none; }
+.tabs-scroll-hint {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 36px;
+  border: none;
+  cursor: pointer;
+  background: linear-gradient(to right, transparent, var(--bg) 45%);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 0.5rem;
+  pointer-events: auto;
+}
+.tabs-scroll-hint-back {
+  right: auto;
+  left: 0;
+  background: linear-gradient(to left, transparent, var(--bg) 45%);
+  justify-content: flex-start;
+  padding-right: 0;
+  padding-left: 0.5rem;
+}
+.tabs-scroll-hint[hidden] { display: none; }
+/* In the header there's no bottom edge to underline against, so the current tab
+   is a pill instead — the same treatment the sidebar gives the current page. */
+.tab {
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--muted);
+  padding: 0.4rem 0.75rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  letter-spacing: -0.01em;
+}
+@media (hover: hover) {
+  .tab:hover { color: var(--text); background: var(--card-2); }
+}
+.tab.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+/* Tabs belonging to another page stay in the DOM — routing, swipe and the
+   home-card sub-labels all read them — but never render. */
+.tab.tab-off-page { display: none; }
+
+/* ── Primary nav: left sidebar ──────────────────────────
+   Fixed to the left edge. Below the sidebar breakpoint it's an off-canvas
+   drawer opened by the header hamburger; at desktop widths it's permanent and
+   the app shell simply insets by its width. */
+.sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: var(--sidebar-w);
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border-right: 1px solid var(--border);
+  padding: max(0.75rem, env(safe-area-inset-top)) 0.6rem calc(0.75rem + env(safe-area-inset-bottom));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  transform: translateX(-100%);
+  transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+              width 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+body.nav-open .sidebar { transform: none; }
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.5rem 0.6rem 0.9rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.sidebar-brand .brand-logo {
+  width: 28px;
+  height: 28px;
+}
+
+.side-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.side-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  padding: 0.6rem 0.7rem;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 0.92rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-align: left;
+  cursor: pointer;
+}
+.side-nav-item svg { flex-shrink: 0; }
+@media (hover: hover) {
+  .side-nav-item:hover {
+    background: var(--card-2);
+    color: var(--text);
+  }
+}
+.side-nav-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.nav-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 250;
+  background: rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 220ms ease;
+}
+body.nav-open .nav-backdrop {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.nav-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  margin-left: -0.4rem;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .nav-toggle:hover { background: var(--card-2); }
+}
+
+@media (min-width: 900px) {
+  body {
+    padding-left: var(--sidebar-w);
+    transition: padding-left 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .sidebar { transform: none; }
+  .nav-backdrop { display: none; }
+  /* The sidebar already carries the logo — don't repeat it in the header. */
+  header .brand-home { display: none; }
+
+  /* Collapsed: the sidebar narrows to an icon rail rather than leaving —
+     the destinations stay one click away, and the shell hands back the
+     difference. Only the labels go; each row centres its glyph in place. */
+  body.nav-collapsed { padding-left: var(--sidebar-rail-w); }
+  body.nav-collapsed .sidebar {
+    width: var(--sidebar-rail-w);
+    padding-left: 0.4rem;
+    padding-right: 0.4rem;
+    overflow-x: hidden;
+  }
+  body.nav-collapsed .sidebar-brand,
+  body.nav-collapsed .side-nav-item {
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  /* The labels are hidden rather than removed so the rows keep their identity
+     to a screen reader; the title attribute app.js sets is the sighted hint. */
+  body.nav-collapsed .sidebar-brand > span,
+  body.nav-collapsed .side-nav-item > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+/* ── Home page: one card button per page ──────────────── */
+.home-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 0.75rem;
+}
+.home-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  min-height: 120px;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card);
+  color: var(--text);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.home-card-icon {
+  display: inline-flex;
+  margin-bottom: 0.35rem;
+  padding: 0.45rem;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.home-card-label {
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.home-card-subs {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+@media (hover: hover) {
+  .home-card:hover {
+    border-color: var(--accent);
+    background: var(--card-2);
+  }
+}
+@media (max-width: 600px) {
+  .home-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 0.6rem;
+  }
+}
+
+/* Notes view */
+.notes-layout {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: 1fr;
+}
+@media (min-width: 800px) {
+  .notes-layout {
+    grid-template-columns: 220px 1fr;
+    align-items: start;
+  }
+  .notes-sidebar {
+    position: sticky;
+    top: 0;
+    max-height: calc(var(--main-h, 100dvh) - 1rem);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .notes-sidebar > .notes-list {
+    overflow-y: auto;
+    min-height: 0;
+    flex: 1 1 auto;
+  }
+}
+
+.notes-sidebar {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1rem 1.1rem 1.1rem;
+}
+.notes-sidebar > .card-header { align-items: center; }
+.notes-sidebar.collapsed > .card-header { margin-bottom: 0; }
+.notes-sidebar-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  color: var(--muted);
+}
+#library-sidebar-toggle {
+  flex: 1 1 auto;
+  width: auto;
+  justify-content: flex-end;
+}
+#library-sidebar-toggle:hover {
+  background: none;
+}
+.notes-sidebar-toggle[hidden] { display: none; }
+.notes-sidebar-toggle:hover { background: var(--card-2); color: var(--text); }
+.notes-sidebar-toggle.collapsed svg { transform: rotate(-90deg); }
+.notes-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 50vh;
+  padding-bottom: 15vh;
+  color: var(--border);
+}
+.notes-placeholder[hidden] { display: none; }
+
+.dash-section-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin: 0.85rem 0 0.35rem;
+  padding: 0 0.15rem;
+}
+.dash-section-label:first-of-type { margin-top: 0.5rem; }
+
+.notes-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.notes-list[hidden] { display: none; }
+.note-item {
+  width: calc(100% - var(--notes-depth, 0) * 1.4rem);
+  margin-left: calc(var(--notes-depth, 0) * 1.4rem);
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text);
+  padding: 0.5rem 0.7rem;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.notes-sublist {
+  list-style: none;
+  margin: 0.15rem 0 0.15rem 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.notes-sublist[hidden] { display: none; }
+.notes-dir { list-style: none; }
+.notes-dir-toggle {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text);
+  padding: 0.5rem 0.7rem;
+  padding-left: calc(0.4rem + var(--notes-depth, 0) * 1.4rem);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.notes-dir-toggle:hover {
+  background: var(--card-2);
+  border-color: var(--border);
+}
+.notes-dir-toggle.has-active {
+  color: var(--accent);
+}
+.notes-dir-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  color: var(--muted);
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.json-viewer,
+.text-viewer {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.9rem 1rem;
+  margin: 0;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre;
+}
+.json-viewer .json-key { color: #9cdcfe; }
+.json-viewer .json-string { color: #ce9178; }
+.json-viewer .json-number { color: #b5cea8; }
+.json-viewer .json-bool { color: #569cd6; font-weight: 600; }
+.json-viewer .json-null { color: #808080; font-style: italic; }
+.json-viewer.json-invalid { border-color: #b45; }
+
+/* CSV table viewer */
+.report-table-wrap {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: auto;
+  /* Matches thead background so subpixel corner gaps don't reveal cells. */
+  background: var(--card);
+}
+.report-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+.report-table th,
+.report-table td {
+  padding: 0.45rem 0.7rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  vertical-align: top;
+}
+.report-table thead th {
+  position: sticky;
+  /* -1px closes a subpixel gap between the sticky header and the scroll
+     container's top edge; the extra outer box-shadow paints over any remaining
+     sliver so scrolling cells never peek through above the header. */
+  top: -1px;
+  background: var(--card);
+  color: var(--muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 0.7rem;
+  border-bottom: 0;
+  box-shadow:
+    inset 0 -1px 0 var(--border),
+    0 -2px 0 var(--card);
+  z-index: 1;
+}
+.report-table thead th:first-child { border-top-left-radius: 8px; }
+.report-table thead th:last-child { border-top-right-radius: 8px; }
+.report-table tbody tr:nth-child(odd) { background: rgba(255, 255, 255, 0.015); }
+.report-table tbody tr:hover { background: var(--accent-soft); }
+.report-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.report-table td.neg { color: #e57373; }
+.report-table td.pos { color: #81c995; }
+.report-meta {
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin: 0 0 0.6rem;
+}
+.note-item:hover {
+  background: var(--card-2);
+  border-color: var(--border);
+}
+.note-item.active {
+  background: var(--accent-soft);
+  border-color: #25446a;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.notes-content {
+  min-height: 60vh;
+}
+/* Header sits ABOVE the card, not inside it. */
+.notes-content-col {
+  min-width: 0;
+}
+.notes-content-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 0.6rem;
+  padding: 0 0.25rem;
+}
+.notes-content-header h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+/* Auto-hide header when its adjacent card is hidden (no file selected). */
+.notes-content-header:has(+ .notes-content[hidden]) {
+  display: none;
+}
+.pdf-pages {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  align-items: center;
+}
+.pdf-page {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+}
+
+/* Image viewer */
+.image-viewer {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+.image-viewer img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  display: block;
+}
+
+/* ── Library ──────────────────────────────────────────────
+   One row above the browser, outside its two columns so neither the sidebar
+   nor the content scrolling moves it: the open file's name on the left, Edit
+   and Ask Dash together on the right. */
+.library-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 26px;
+  margin-bottom: 0.7rem;
+  padding: 0 0.25rem;
+}
+.library-bar-name {
+  font-size: 0.8rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+/* The name takes the spring; the buttons settle side by side on the row's own
+   gap rather than splitting the space between them. */
+.library-bar .md-edit-actions { margin-left: auto; }
+.library-bar .nutrition-add-btn { margin-left: 0; }
+@media (max-width: 799px) {
+  /* Editing moves to the footer bar pinned at the bottom of the screen, which
+     drives these buttons by clicking them — so they hide rather than go away. */
+  .library-bar .md-edit-actions { display: none; }
+  .library-bar-name { display: none; }
+  /* Nothing left to spring against — Ask Dash keeps the right edge itself. */
+  .library-bar .nutrition-add-btn { margin-left: auto; }
+}
+
+/* Markdown body */
+.markdown-body {
+  font-size: 0.92rem;
+  line-height: 1.55;
+  color: var(--text);
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  margin: 1.2em 0 0.5em;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+.markdown-body h1 { font-size: 1.4rem; }
+.markdown-body h2 { font-size: 1.2rem; }
+.markdown-body h3 { font-size: 1.05rem; }
+.markdown-body h4 { font-size: 0.95rem; color: var(--muted); }
+.markdown-body h1:first-child,
+.markdown-body h2:first-child,
+.markdown-body h3:first-child { margin-top: 0; }
+.markdown-body p { margin: 0.6em 0; }
+.markdown-body img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  margin: 0.5em 0;
+  display: block;
+}
+.markdown-body ul,
+.markdown-body ol { padding-left: 1.4em; margin: 0.5em 0; }
+.markdown-body li { margin: 0.2em 0; }
+.markdown-body a { color: var(--accent); text-decoration: none; }
+.markdown-body a:hover { text-decoration: underline; }
+.markdown-body code {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  padding: 0.05em 0.35em;
+  border-radius: 4px;
+  font-size: 0.85em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.markdown-body pre {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  padding: 0.75rem 0.85rem;
+  border-radius: 8px;
+  overflow-x: auto;
+}
+.markdown-body pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+.markdown-body blockquote {
+  margin: 0.6em 0;
+  padding: 0.2em 0.9em;
+  border-left: 3px solid var(--accent-soft);
+  color: var(--muted);
+}
+.markdown-body hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.2em 0;
+}
+.markdown-body table {
+  border-collapse: collapse;
+  margin: 0.6em 0;
+}
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid var(--border);
+  padding: 0.4em 0.7em;
+}
+.markdown-body th { background: var(--card-2); }
+
+/* Markdown edit button & editor */
+.md-edit-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.78rem;
+  padding: 0.2em 0.6em;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.md-edit-btn:hover { color: var(--text); border-color: var(--text); }
+.md-edit-textarea {
+  width: 100%;
+  min-height: 300px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.7em;
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  resize: vertical;
+  color-scheme: dark;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+/* iOS Safari auto-zooms when focusing any input/textarea/select below 16px,
+   which throws off our layout (e.g. cuts off the markdown footer's Save
+   button). Force >=16px on mobile across every form field. !important is
+   intentional — many of our component rules set smaller sizes for desktop
+   density, and the zoom-prevention needs to always win on mobile. */
+@media (max-width: 799px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+  /* type="time" opens a native wheel picker on iOS, not a keyboard, so there's
+     no zoom to prevent — forcing 16px here only overflows the fixed-width
+     timeline time inputs. */
+  input[type="time"] {
+    font-size: 0.85rem !important;
+  }
+}
+.md-edit-actions {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+.md-edit-btn.md-save-btn {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.md-edit-btn.md-save-btn:hover { color: #fff; }
+
+/* Action bar with file name on left, edit/cancel/save on right.
+   Mobile: pinned to viewport bottom. Desktop: in flow above the article. */
+.notes-content-footer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.35rem max(0.9rem, env(safe-area-inset-right)) calc(0.35rem + env(safe-area-inset-bottom)) max(0.9rem, env(safe-area-inset-left));
+  background: var(--card);
+  border-top: 1px solid var(--border);
+  z-index: 20;
+}
+.notes-content-footer-name {
+  font-size: 0.8rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+/* Hide the bar when no markdown file is selected. Driven by a body class
+   that JS toggles in setTab/loadNote/deselectNote/loadDashItem/deselect —
+   avoids relying on attribute-selector sibling combinators that some iOS
+   Safari builds don't re-evaluate when [hidden] is toggled via JS. */
+body:not(.md-footer-visible) .notes-content-footer {
+  display: none;
+}
+@media (max-width: 799px) {
+  /* Reserve space at the bottom of <main> only when the fixed footer is
+     actually showing (a markdown file is open). JS toggles md-footer-visible
+     on body, so empty/placeholder states don't get a stray bottom gap. */
+  body.md-footer-visible main {
+    margin-bottom: calc(2.5rem + env(safe-area-inset-bottom));
+    padding-bottom: 1rem;
+  }
+}
+@media (min-width: 800px) {
+  /* Desktop: bar appears in flow at the top of the content column, just
+     above the markdown article — not pinned to the viewport. */
+  .notes-content-footer {
+    position: static;
+    padding: 0.4rem 0.5rem 0.55rem;
+    margin-bottom: 0.5rem;
+    background: transparent;
+    border-top: none;
+    border-bottom: 1px solid var(--border);
+  }
+}
+/* Edit button is the primary action — same blue as Save. Cancel keeps the
+   default muted style. */
+#library-edit-btn,
+#md-mobile-edit-btn {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+#library-edit-btn:hover,
+#md-mobile-edit-btn:hover { color: #fff; }
+
+/* Mobile-only sticky footer for the Library's open text file. Sits as the
+   last flex item in body's column, so <main> scrolls between the sticky
+   tabs above and this footer below — no position:fixed required. */
+.md-mobile-footer { display: none; }
+@media (max-width: 799px) {
+  .md-mobile-footer:not([hidden]) {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    padding: calc(0.5rem + env(safe-area-inset-bottom) * 0.25) max(0.9rem, env(safe-area-inset-right))
+             calc(0.5rem + env(safe-area-inset-bottom) * 0.25) max(0.9rem, env(safe-area-inset-left));
+    background: var(--bg);
+    border-top: 1px solid var(--border);
+    z-index: 20;
+  }
+  .md-mobile-footer .md-edit-btn {
+    font-size: 0.82rem;
+    padding: 0.2em 0.65em;
+  }
+  .md-mobile-footer-name { font-size: 0.82rem; }
+  /* Hide the in-tab footer on mobile — replaced by the body-level one. */
+  .notes-content-footer { display: none !important; }
+  /* Body flex layout pins the footer now, so no extra bottom margin. */
+  body.md-footer-visible main { margin-bottom: 0; padding-bottom: 1rem; }
+}
+.md-mobile-footer-name {
+  font-size: 0.8rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.md-mobile-footer-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+/* Jobs grid (kept from original two-column layout) */
+@media (min-width: 900px) {
+  #tab-jobs .card { max-width: none; }
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1rem 1.1rem 1.1rem;
+  min-width: 0;
+}
+
+
+.card-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.card-header h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.count {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.job-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.job {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.75rem 0.85rem;
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  gap: 0.5rem 0.85rem;
+  align-items: start;
+}
+
+.job-delete {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 0 0.2rem;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.job:hover .job-delete { opacity: 1; }
+.job-delete:hover { color: #e55; }
+
+.job.disabled {
+  opacity: 0.45;
+}
+
+.job-toggle {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+.job-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  margin: 0;
+}
+
+.job-time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.job-body {
+  min-width: 0;
+}
+
+.job-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.4rem;
+  margin-bottom: 0.35rem;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.tag {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  text-transform: lowercase;
+  border: 1px solid #25446a;
+}
+.tag.recurring { background: #1a2e1f; color: var(--green); border-color: #1f3d2a; }
+.tag.once      { background: #2e2a1a; color: var(--amber); border-color: #3d361f; }
+.tag.monthly   { background: #2a1f3a; color: var(--purple); border-color: #3a2a52; }
+.tag.model     { background: #1c2129; color: var(--muted); border-color: var(--border); }
+.tag.day       { background: #1c2129; color: var(--muted); border-color: var(--border); text-transform: uppercase; }
+
+.job-prompt {
+  font-size: 0.88rem;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 2px 4px;
+  margin: -2px -4px;
+}
+.job-prompt:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.job-prompt-edit-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.job-prompt-edit {
+  width: 100%;
+  font-size: 0.88rem;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 0.4rem 0.5rem;
+  resize: none;
+  overflow: hidden;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.jobs-hide-inactive-toggle {
+  display: flex;
+  align-items: center;
+  align-self: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  margin-left: auto;
+  padding: 0.2rem 0.55rem;
+  box-sizing: border-box;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--card-2);
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.jobs-hide-inactive-toggle:hover { filter: brightness(1.15); }
+.jobs-hide-inactive-toggle:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.switch {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 24px;
+  height: 14px;
+}
+.switch input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.switch-track {
+  position: absolute;
+  inset: 0;
+  background: var(--border);
+  border-radius: 999px;
+  transition: background 0.15s ease;
+}
+.switch-track::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--card);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  transition: transform 0.15s ease;
+}
+.switch input:checked + .switch-track { background: var(--accent); }
+.switch input:checked + .switch-track::before { transform: translateX(10px); }
+.switch input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.add-job-btn {
+  align-self: center;
+  font-size: 0.72rem;
+  font-family: inherit;
+  line-height: 1;
+  padding: 0.2rem 0.55rem;
+  box-sizing: border-box;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid var(--green);
+  background: #0f1d14;
+  color: var(--green);
+  cursor: pointer;
+  font-weight: 500;
+}
+.add-job-btn:hover { filter: brightness(1.2); }
+.add-job-btn.is-cancel {
+  border-color: #f87171;
+  background: #1d0f0f;
+  color: #f87171;
+}
+
+.new-job-form {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.75rem 0.85rem;
+  margin-bottom: 0.55rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.new-job-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.new-job-form label {
+  font-size: 0.72rem;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.new-job-form input,
+.new-job-form select {
+  min-height: 30px;
+  font-size: 0.84rem;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.3rem 0.5rem;
+  outline: none;
+  color-scheme: dark;
+}
+.new-job-form select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 2.75rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='m1 1 5 5 5-5' fill='none' stroke='%238a94a6' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.5rem center;
+  background-size: 0.75rem auto;
+}
+
+.editable { cursor: pointer; }
+.editable:hover { filter: brightness(1.3); }
+
+.job-field-edit {
+  font-size: 0.75rem;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 0.15rem 0.3rem;
+  outline: none;
+  color-scheme: dark;
+}
+input[type="time"].job-field-edit { width: 7rem; }
+input[type="date"].job-field-edit { width: 8.5rem; }
+input[type="number"].job-field-edit { width: 3.5rem; }
+select.job-field-edit { width: auto; }
+
+.days-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-bottom: 0.3rem;
+}
+.day-check {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  min-height: 28px;
+  font-size: 0.74rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--card-2);
+  color: var(--muted);
+  cursor: pointer;
+  text-transform: uppercase;
+  user-select: none;
+}
+.day-check input { display: none; }
+.day-check.checked {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.job-prompt-edit-btns {
+  display: flex;
+  gap: 0.4rem;
+}
+.job-prompt-edit-btns button {
+  font-size: 0.72rem;
+  font-family: inherit;
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  background: var(--card-2);
+  color: var(--text);
+}
+.job-prompt-save {
+  background: var(--accent) !important;
+  color: #fff !important;
+  border-color: var(--accent) !important;
+}
+#new-job-form .job-prompt-edit-btns button {
+  box-sizing: border-box;
+  height: 24px;
+  line-height: 1;
+  padding: 0.2rem 0.55rem;
+  border-radius: 6px;
+}
+#new-job-save {
+  background: #0f1d14 !important;
+  color: var(--green) !important;
+  border-color: var(--green) !important;
+}
+#new-job-cancel {
+  background: #1d0f0f;
+  color: #f87171;
+  border-color: #f87171;
+}
+
+.empty {
+  color: var(--muted);
+  font-size: 0.9rem;
+  text-align: center;
+  padding: 1.5rem 0;
+}
+
+/* System jobs config */
+.system-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.system-status {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.system-status.ok { color: var(--green); }
+.system-status.warn { color: var(--amber); }
+.system-status.err { color: #f87171; }
+.system-path {
+  margin: -0.25rem 0 0.75rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  word-break: break-word;
+}
+.system-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 0.65rem;
+  align-items: start;
+}
+.system-job {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.75rem 0.85rem;
+}
+.system-job-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.65rem;
+}
+.system-job-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.system-job-enabled {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+.system-job-enabled input {
+  accent-color: var(--accent);
+}
+.system-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.6rem;
+}
+.system-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+.system-field-label {
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.system-field input,
+.system-field textarea {
+  width: 100%;
+  min-width: 0;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.5rem;
+  font-family: inherit;
+  font-size: 0.85rem;
+  color-scheme: dark;
+}
+.system-field textarea {
+  min-height: 4.8rem;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.system-field input:focus,
+.system-field textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.system-field.invalid input,
+.system-field.invalid textarea {
+  border-color: #f87171;
+}
+.btn.system-restart-btn {
+  border-color: rgba(251, 191, 36, 0.65);
+  color: var(--amber);
+}
+
+@media (max-width: 600px) {
+  #system-card > .card-header { flex-wrap: wrap; }
+  .system-list { grid-template-columns: 1fr; }
+  .system-actions {
+    flex-basis: 100%;
+    justify-content: flex-end;
+    margin-left: 0;
+  }
+  .system-status { margin-left: auto; }
+}
+
+/* ── Dash composer (inline) ─────────────────────────── */
+
+.dash-footer {
+  /* Hidden on every tab for now — the markup and its wiring stay put, so
+     dropping this one line brings the composer back. */
+  display: none;
+  flex: 0 0 auto;
+  padding: 1rem 0;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+
+@keyframes dash-pulse-inline {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.65; }
+}
+
+/* Desktop default: inline single-line composer */
+.dash-panel {
+  display: flex;
+  flex: 0 0 auto;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 0.85rem 0.9rem 0.9rem;
+  flex-direction: column;
+  gap: 0.6rem;
+  box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.35);
+}
+@media (min-width: 769px) {
+  .dash-panel {
+    width: calc(100% - 2rem);
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+}
+.dash-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Sticky-top base: always pinned, always opaque, always its own stacking
+   context so tab-panel content below can never paint over it mid-transition. */
+.sticky-top {
+  flex-shrink: 0;
+  z-index: 100;
+  background: var(--bg);
+}
+/* Mobile: panel becomes the bottom bar of the flex-column app shell. */
+@media (max-width: 768px) {
+  .dash-footer {
+    padding: 1rem 0 max(1rem, env(safe-area-inset-bottom));
+  }
+  .dash-panel {
+    display: flex;
+    width: calc(100% - 2rem);
+    max-width: none;
+    margin: 0 auto;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding-bottom: 0.9rem;
+  }
+}
+.dash-icon-btn {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 0.25rem;
+}
+.dash-icon-btn:hover { color: var(--text); }
+
+.dash-response {
+  background: #28293a;
+  border: 1px solid #3b3d54;
+  border-radius: 10px;
+  padding: 0.6rem 0.7rem;
+  font-size: 0.88rem;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-y: auto;
+  max-height: 30vh;
+}
+.dash-response.error { color: #f87171; border-color: #3d1f1f; background: #1d0f0f; }
+
+.dash-input-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+
+.dash-input-row input {
+  flex: 1;
+  min-width: 0;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 0.5rem 0.6rem;
+  font-family: inherit;
+  font-size: 0.9rem;
+  line-height: 1.3;
+  min-height: 2.6em;
+}
+.dash-input-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.dash-input-row input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.dash-send-btn,
+.dash-mic-btn {
+  background: var(--accent);
+  color: #06121f;
+  border: none;
+  border-radius: 8px;
+  padding: 0.55rem 0.7rem;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease;
+}
+.dash-send-btn {
+  background: var(--green);
+  color: #062013;
+}
+.dash-send-btn:disabled,
+.dash-mic-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.dash-send-btn svg,
+.dash-mic-btn svg { display: block; }
+
+.dash-send-btn .send-icon-cancel { display: none; }
+.dash-send-btn.listening {
+  background: #f87171;
+  color: #1d0f0f;
+}
+.dash-send-btn.listening .send-icon-send { display: none; }
+.dash-send-btn.listening .send-icon-cancel { display: block; }
+
+.dash-mic-btn.listening {
+  background: var(--green);
+  color: #062013;
+  animation: dash-pulse-inline 1.4s ease-in-out infinite;
+}
+.dash-mic-btn.busy {
+  background: var(--amber);
+  color: #2e2a1a;
+  cursor: not-allowed;
+}
+
+.telegram-compose-row {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+/* ── Calendar tab ────────────────────────────────────── */
+.calendar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.cal-day-group {
+  border-bottom: 1px solid var(--border);
+}
+.cal-day-group:last-child { border-bottom: none; }
+
+.cal-day-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  padding: 0.75rem 0.85rem 0.35rem;
+  background: var(--card);
+}
+
+.cal-event {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.55rem 0.85rem;
+  border-left: 3px solid var(--accent);
+  transition: background 0.15s;
+}
+.cal-event:hover { background: var(--card-2); }
+.cal-event.cal-google { border-left-color: var(--green); }
+.cal-event.cal-allday { border-left-style: dashed; }
+
+.cal-time {
+  flex-shrink: 0;
+  width: 6.5rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  padding-top: 0.05rem;
+}
+
+.cal-details { flex: 1; min-width: 0; }
+
+.cal-summary {
+  font-size: 0.9rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cal-location {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 0.1rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cal-meta {
+  font-size: 0.72rem;
+  color: var(--muted);
+  opacity: 0.7;
+  margin-top: 0.1rem;
+}
+
+@media (max-width: 600px) {
+  .cal-event { flex-direction: column; gap: 0.15rem; }
+  .cal-time { width: auto; }
+}
+
+/* ── Finances ──────────────────────────────────────────── */
+.finances-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.fin-month {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.85rem 1rem 1rem;
+}
+
+.fin-month-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+.fin-month-label {
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.fin-month-range {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.fin-summary-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.6rem;
+  margin-bottom: 0.85rem;
+}
+.fin-stat {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.45rem 0.6rem;
+  min-width: 0;
+}
+.fin-stat-label {
+  font-size: 0.65rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.fin-stat-val {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-top: 0.15rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fin-stat-val.fin-positive { color: var(--green); }
+.fin-stat-val.fin-negative { color: #f87171; }
+
+.fin-section {
+  margin-top: 0.65rem;
+}
+.fin-section-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.15rem;
+}
+
+.fin-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 0.3rem 0;
+  font-size: 0.85rem;
+  gap: 0.75rem;
+}
+.fin-line-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.fin-line-amount {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.fin-income-line .fin-line-amount { color: var(--green); }
+
+.fin-line-total {
+  font-weight: 600;
+  border-top: 1px solid var(--border);
+  margin-top: 0.15rem;
+  padding-top: 0.4rem;
+}
+
+@media (max-width: 600px) {
+  .fin-stat { padding: 0.35rem 0.45rem; }
+  .fin-stat-val { font-size: 0.85rem; }
+  .fin-line { font-size: 0.8rem; }
+}
+
+/* ── Buttons ───────────────────────────────────────── */
+.btn {
+  font-family: inherit;
+  font-size: 0.82rem;
+  padding: 0.35rem 0.7rem;
+  background: var(--card-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+/* Its own span so narrow screens can drop the word and keep the icon. The
+   margin lives here too, so hiding it takes the gap with it. */
+.btn-label { margin-left: 0.3rem; }
+
+/* Sized in em so it tracks whatever button holds it, at the label's cap height. */
+.btn-icon {
+  width: 1.15em;
+  height: 1.15em;
+  flex: none;
+}
+/* Any button carrying one centers its contents instead of baselining them. */
+.btn:has(.btn-icon) {
+  display: inline-flex;
+  align-items: center;
+}
+
+.btn:hover { border-color: var(--text); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn.primary {
+  background: #06a557;
+  color: #fff;
+  border-color: #06a557;
+}
+.btn.primary:hover { filter: brightness(1.1); border-color: #06a557; }
+
+
+/* ── Health tab ────────────────────────────────────── */
+.health-content { display: flex; flex-direction: column; gap: 24px; padding: 4px 0; }
+.health-panel { background: var(--card-2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.health-panel-title { margin: 0 0 12px; font-size: 14px; font-weight: 600; color: var(--text); text-transform: uppercase; letter-spacing: 0.04em; }
+.health-charts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+}
+.health-chart {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.health-chart-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.health-chart-title { font-size: 12px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.health-units { font-weight: 400; color: var(--muted); font-size: 11px; }
+.health-chart-latest { font-size: 13px; font-weight: 600; display: flex; flex-direction: column; align-items: flex-end; line-height: 1.2; }
+.health-chart-latest.ok { color: var(--green); }
+.health-chart-latest.warn { color: var(--amber); }
+.health-range { font-size: 10px; font-weight: 400; color: var(--muted); margin-top: 1px; }
+.health-chart-svg { width: 100%; height: auto; display: block; }
+
+/* Nutrition — food reference table from nutrition.xlsm "raw" tab.
+   Macro series colors are validated for CVD separation and >=3:1 contrast
+   against the --card surface; segments are separated by a 2px surface gap. */
+:root {
+  --macro-carbs: #3987e5;
+  --macro-protein: #d95926;
+  --macro-fat: #199e70;
+}
+.nutrition-controls { display: flex; gap: 8px; margin-bottom: 10px; }
+.nutrition-search {
+  flex: 1;
+  min-width: 0;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 16px;
+  padding: 8px 10px;
+  -webkit-appearance: none;
+}
+.nutrition-search::placeholder { color: var(--muted); }
+.nutrition-search:focus { outline: none; border-color: var(--accent); }
+.nutrition-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-bottom: 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.nutrition-key { display: inline-flex; align-items: center; gap: 5px; }
+.nutrition-swatch { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.nutrition-swatch[data-macro="carbs"] { background: var(--macro-carbs); }
+.nutrition-swatch[data-macro="protein"] { background: var(--macro-protein); }
+.nutrition-swatch[data-macro="fat"] { background: var(--macro-fat); }
+.nutrition-legend-note { margin-left: auto; }
+.nutrition-content { display: flex; flex-direction: column; gap: 6px; }
+.nutrition-item {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.nutrition-item.open { border-color: var(--accent-soft); }
+.nutrition-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.nutrition-row-main { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.nutrition-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nutrition-serving { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.nutrition-cal { font-size: 15px; font-weight: 600; color: var(--text); white-space: nowrap; }
+.nutrition-cal-units { font-size: 10px; font-weight: 400; color: var(--muted); margin-left: 3px; }
+.nutrition-row-viz { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+.nutrition-bar {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+  flex: 1 1 140px;
+  min-width: 120px;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.nutrition-bar-empty { background: var(--border); }
+.nutrition-seg { min-width: 0; }
+.nutrition-seg[data-macro="carbs"] { background: var(--macro-carbs); }
+.nutrition-seg[data-macro="protein"] { background: var(--macro-protein); }
+.nutrition-seg[data-macro="fat"] { background: var(--macro-fat); }
+.nutrition-stats { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--text); }
+.nutrition-stat { white-space: nowrap; }
+.nutrition-stat-label { color: var(--muted); margin-right: 4px; }
+.nutrition-stat-units { color: var(--muted); font-size: 10px; margin-left: 2px; }
+.nutrition-detail {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.nutrition-group-title {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.nutrition-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 6px;
+}
+.nutrition-cell {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.nutrition-cell.is-zero { opacity: 0.4; }
+/* Long names ("Vitamin B5 (Pantothenic Acid)") wrap to two lines rather than
+   clipping — a truncated nutrient name is worse than a taller cell. */
+.nutrition-cell-label {
+  font-size: 10px;
+  line-height: 1.25;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.nutrition-cell-value { font-size: 13px; font-weight: 600; color: var(--text); }
+.nutrition-cell-units { font-size: 10px; font-weight: 400; color: var(--muted); margin-left: 3px; }
+
+/* Cards / table view toggle — segmented control on each nutrition tab. */
+.view-toggle {
+  display: inline-flex;
+  margin-left: auto;
+  align-self: center;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px;
+  gap: 2px;
+}
+.view-toggle-btn {
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.view-toggle-btn:hover { color: var(--text); }
+.view-toggle-btn.active { background: var(--accent-soft); color: var(--text); }
+/* Sits beside the view toggle, which carries the `margin-left: auto`. */
+.expand-all-btn {
+  align-self: center;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.expand-all-btn:hover { color: var(--text); border-color: var(--accent); }
+.expand-all-btn[hidden] { display: none; }
+
+/* ── Table settings cog ──────────────────────────────────
+   Which pinned rows the table carries — five checkboxes, so a row of five
+   toggle buttons would swamp the controls line. The cog keeps it to one
+   button's worth of width and opens over the table rather than pushing it
+   down; the menu is a sibling of the button so `position: relative` here is
+   what it hangs off. */
+.table-config { position: relative; align-self: center; }
+.table-config[hidden] { display: none; }
+.table-config-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  padding: 7px 9px;
+  cursor: pointer;
+}
+.table-config-btn:hover { color: var(--text); border-color: var(--accent); }
+/* Open reads as pressed — the menu can be scrolled off the bottom of a short
+   viewport, and the button is the part that's always in view. */
+.table-config-btn[aria-expanded="true"] { color: var(--text); border-color: var(--accent); }
+.table-config-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  /* Right-aligned: the cog is the last thing on the controls line, so a
+     left-aligned menu would hang off the edge of the card. */
+  right: 0;
+  z-index: 30;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  padding: 6px;
+}
+.table-config-menu[hidden] { display: none; }
+.table-config-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  padding: 6px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.table-config-item:hover { background: var(--card-2); }
+.table-config-item input { accent-color: var(--accent); margin: 0; }
+/* The colours setting acts on the row above it rather than adding one of its
+   own, so it sits apart from the four that pin rows. */
+.table-config-item.is-sub { margin-left: 18px; }
+.table-config-item.is-sub:has(input:disabled) { opacity: 0.45; cursor: default; }
+
+/* The three nutrition tabs opt out of <main>'s 1100px cap on its children: the
+   nutrient tables are ~46 columns wide, so that cap only bought a strip of
+   empty page either side and more sideways scrolling inside the table. */
+#tab-nutrition,
+#tab-groups,
+#tab-food-logs { max-width: none; }
+
+/* Spreadsheet view. ~45 nutrient columns, so the table scrolls inside its own
+   wrapper (never the page) with the name column and header row pinned. */
+.ntable-wrap {
+  /* The table body is the scroller, with the header and pinned rows stuck to
+     its top. fitTableToViewport() sets max-height so the wrapper ends at the
+     bottom of <main> — the page itself then has nothing left to scroll. */
+  overflow: auto;
+  /* The drag-and-drop line is placed against this box (sticky cells position
+     against the scrollport either way, so they're unaffected). */
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-2);
+}
+.ntable {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+  white-space: nowrap;
+  /* One source of truth for an icon button's footprint: the buttons take these,
+     and so does the actions column's reserved width. */
+  --ntable-icon-w: 26px;
+  --ntable-icon-gap: 2px;
+}
+/* Grid lines: one step below --border, enough to guide the eye across 46
+   columns without the table reading as a mesh. The last cell drops its rule so
+   the grid doesn't double up on the wrapper's own edge. */
+.ntable th,
+.ntable td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--grid);
+  text-align: right;
+}
+.ntable tr > *:last-child { border-right: 0; }
+/* The pinned column closes its own edge a step stronger than the grid — content
+   scrolls under it, so that seam has to be unambiguous. */
+.ntable th.ntable-name,
+.ntable td.ntable-name { border-right: 1px solid var(--grid-strong); }
+/* Serving size and its unit: text describing the row, not a measurement of it,
+   so they read left-aligned ahead of the wall of right-aligned numbers. The
+   line closing the pair is the same weight as every other column rule — a
+   lighter one there read as a gap in the grid. */
+.ntable-lead { text-align: left !important; color: var(--muted); }
+.ntable tbody .ntable-lead { color: var(--text-2); }
+/* Three sticky layers, highest first: the header (4/5), a stuck section row
+   (2/3), the name column in the body (1). Within each, the name column outranks
+   its row because it pins in both directions and everything scrolls under it. */
+.ntable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: var(--card);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  /* Top, not bottom: columns without a units line (Calories) would otherwise
+     drop to sit level with the neighbours' units instead of their labels. */
+  vertical-align: top;
+}
+.ntable-units { display: block; font-size: 9px; font-weight: 400; text-transform: none; letter-spacing: 0; }
+/* The name column pins left; its header pins in both directions, so it needs
+   the higher z-index to stay above the rest of the sticky header row. */
+.ntable-name {
+  position: sticky;
+  /* Second in from the left edge: the actions column pins ahead of it, and its
+     measured width lands in --ntable-actions-w (see syncPinnedTableRows). The
+     fallback covers the first frame only — an Edit + Delete pair, which is
+     every table but Templates, where three are reserved. */
+  left: var(--ntable-actions-w, 68px);
+  z-index: 1;
+  background: var(--card-2);
+  text-align: left !important;
+  max-width: 220px;
+}
+.ntable thead .ntable-name { z-index: 5; background: var(--card); }
+.ntable-name-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  color: var(--text);
+}
+.ntable-meta { display: block; font-size: 10px; font-weight: 400; color: var(--muted); }
+/* Crosshair. Reading a figure 30 columns in means tracking it back to a row
+   name on the left and a nutrient label at the top, so the hovered row and
+   column both sink to --row-hover and light their rules in teal.
+   The row closes with the rule under it *and* the rule under the row above, so
+   it's boxed in rather than underlined; the column's left edge is likewise the
+   previous column's border-right. That neighbour half is the one thing CSS
+   can't reach for a column (there's no "cell in the hovered column"), so the
+   index comes from JS — see setNtableHoverColumn. The fills are further down,
+   after the rules they have to beat. */
+.ntable tbody tr:hover > *,
+.ntable thead .ntable-pinned:hover > *,
+.ntable tbody tr:has(+ tr:hover) > *,
+.ntable thead tr:has(+ tr.ntable-pinned:hover) > * { border-bottom-color: var(--grid-hover); }
+/* Some rows close their top themselves rather than leaning on the rule under
+   the row above — the first pinned row and every parent row both carry a
+   border-top — so tinting only the neighbour's border-bottom left those
+   half-lit. Where there is no top border this costs nothing. */
+.ntable tbody tr:hover > *,
+.ntable thead .ntable-pinned:hover > * { border-top-color: var(--grid-hover); }
+/* Dimmed with a colour, never `opacity` — opacity fades the cell's background
+   too, which left zero cells a lighter patch in an otherwise even hovered row. */
+.ntable td.is-zero { color: var(--muted-dim); }
+.ntable tbody tr:last-child th,
+.ntable tbody tr:last-child td { border-bottom: 0; }
+/* The spacer closing the table (see renderNutrientTable) is height and grid and
+   nothing else: its cells keep the column rules, so the grid reaches the bottom
+   edge rather than stopping a row short of it, and the row above keeps the rule
+   that closes the data — the strip reads as an empty row of the table, not as a
+   table that gave up. No hover background: it isn't a row anyone is reading. */
+.ntable tbody tr.ntable-spacer > th,
+.ntable tbody tr.ntable-spacer > td {
+  height: 14px;
+  padding: 0;
+  border-bottom: 0;
+}
+/* The pinned columns carry their own hover rules, so each one has to be named
+   here to be held at the resting colour. */
+.ntable tbody tr.ntable-spacer:hover > td,
+.ntable tbody tr.ntable-spacer:hover > .ntable-actions,
+.ntable tbody tr.ntable-spacer:hover > .ntable-name { background: var(--card-2); }
+/* Actions pin to the left edge, ahead of the name column, so Edit/Delete stay
+   reachable at any horizontal scroll position. Same z-index ladder as the name
+   column: body cell, sticky parent, header. */
+.ntable-actions {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--card-2);
+  text-align: left !important;
+  white-space: nowrap;
+}
+.ntable thead .ntable-actions { z-index: 5; background: var(--card); }
+/* Icon buttons: Edit, Delete, and the nested rows' Remove. */
+.ntable-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--ntable-icon-w, 26px);
+  height: 24px;
+  padding: 0;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.ntable-icon-btn + .ntable-icon-btn { margin-left: var(--ntable-icon-gap, 2px); }
+.ntable-icon-btn:hover { color: var(--text); border-color: var(--border); background: var(--card-2); }
+.ntable-icon-danger:hover { color: var(--amber); border-color: var(--amber); }
+/* Save: the one action here that commits, so it reads as the primary. */
+.ntable-icon-go { color: var(--accent); border-color: var(--accent); }
+.ntable-icon-go:hover { color: var(--text); background: var(--accent-soft); border-color: var(--accent); }
+.ntable-icon-btn.is-busy { opacity: 0.5; cursor: default; }
+.ntable-icon-btn.is-failed { color: var(--amber); border-color: var(--amber); }
+/* Pinned yardstick row: sticks directly under the label row, whose height is
+   measured after paint into --ntable-head-h (the fallback covers first frame). */
+.ntable thead .ntable-pinned th,
+.ntable thead .ntable-pinned td {
+  position: sticky;
+  top: var(--ntable-head-h, 34px);
+  z-index: 4;
+  background: var(--card);
+  border-bottom: 2px solid var(--border);
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 12px;
+}
+.ntable thead .ntable-pinned .ntable-name,
+.ntable thead .ntable-pinned .ntable-actions { z-index: 5; }
+/* Second pinned row sits below the first; JS overwrites both with measured
+   offsets, these are only the pre-paint fallbacks. */
+.ntable thead .ntable-pinned ~ .ntable-pinned th,
+.ntable thead .ntable-pinned ~ .ntable-pinned td { top: calc(var(--ntable-head-h, 34px) + 30px); }
+/* Nested group rows: a totals row, then its foods indented beneath it, then the
+   picker for adding another. */
+.ntable-row-parent th,
+.ntable-row-parent td {
+  border-top: 1px solid var(--border);
+  font-weight: 600;
+}
+/* A template's totals are a sum of sums — the only row in the day that isn't
+   something you eat — so they take the purple the compare row uses. Zeros stay
+   dimmed: 46 columns of purple noughts would drown the numbers that matter. */
+#tab-food-logs .ntable-row-parent td,
+#tab-food-logs .ntable-row-parent .ntable-name-text { color: var(--purple); }
+#tab-food-logs .ntable-row-parent td.is-zero { color: var(--muted-dim); }
+/* Except where the day misses its daily bounds: short of the min in yellow,
+   past the max in orange. After the rules above on purpose — a nutrient the day
+   has none of at all is the clearest miss there is, so the flag has to beat the
+   dimmed zero as well as the row's purple. */
+#tab-food-logs .ntable-row-parent td.ntable-under-min { color: var(--yellow); }
+#tab-food-logs .ntable-row-parent td.ntable-over-max { color: var(--orange); }
+/* Hangs just under the pinned header while its own rows scroll past, then the
+   next parent lands on the same line and covers it (see renderNutrientTable).
+   --ntable-body-top is the measured header height (fallback covers first paint). */
+.ntable-sticky-parent th,
+.ntable-sticky-parent td {
+  position: sticky;
+  top: var(--ntable-body-top, 64px);
+  z-index: 2;
+  background: var(--card);
+}
+/* Sticky in both directions at once on a parent row — top from the rule above,
+   left from .ntable-actions — so it needs to outrank the cells it crosses. */
+.ntable-sticky-parent .ntable-name,
+.ntable-sticky-parent .ntable-actions { z-index: 3; }
+/* A day's group rows sit on their own band and carry the day's weight, so each
+   group and the foods under it read as a block. The sticky columns carry their
+   own background, so they have to be told too. Being id-scoped, this outranks
+   any plain hover rule — which is why the crosshair's fills carry the same id
+   and come after (see below). */
+#tab-food-logs .ntable-row-child td,
+#tab-food-logs .ntable-row-child .ntable-name,
+#tab-food-logs .ntable-row-child .ntable-actions { background: var(--row-sunken); }
+#tab-food-logs .ntable-row-child td,
+#tab-food-logs .ntable-row-child .ntable-name-text { font-weight: 600; }
+/* Room for three icons whatever a row is showing. This is the only table that
+   ever gets to three (Delete, Duplicate, Edit on a day), and the column pins
+   every row to the left edge — so a day dropping to Save/Cancel while you edit
+   it would otherwise pull the whole table sideways and back. Three buttons,
+   the gaps between them, the cell's own 10px either side (border-box, so the
+   padding counts against this), its rule, and a few px over so the third
+   button never sits flush against the edge. */
+#tab-food-logs .ntable-actions {
+  min-width: calc(3 * var(--ntable-icon-w) + 2 * var(--ntable-icon-gap) + 2 * 10px + 1px + 6px);
+}
+
+/* The crosshair's row fill, and the last word on a cell's background. Three
+   things set one of their own and every one of them used to win: the sticky
+   parent's --card and the pinned columns' --card-2 by landing later in the
+   file, and the food-log group band's --row-sunken by carrying an id. So this
+   sits after all of them and carries the id too — a day row and a group row
+   were the two that never visibly hovered at all. `> *` rather than `td`
+   catches the two pinned columns, which have to darken with the row or the
+   fill breaks at the sticky seam. The spacer is not a row anyone is reading;
+   it keeps the rule above that holds it at rest. */
+#tab-food-logs .ntable tbody tr:hover:not(.ntable-spacer) > *,
+.ntable tbody tr:hover:not(.ntable-spacer) > *,
+/* The daily target/min/max rows ride in the header, not the body, so every
+   tbody-scoped rule above misses them — they hover like any other row. Their
+   own --card is set on the cells, hence naming .ntable-pinned to outrank it. */
+.ntable thead .ntable-pinned:hover > * { background: var(--row-hover); }
+
+/* Nested rows read lighter than the parent totals but are still numbers you sit
+   and compare — --muted was too far down for that, so they take --text-2. */
+.ntable-row-child td { color: var(--text-2); }
+.ntable-row-child td.is-zero { color: var(--muted-dim); }
+.ntable-row-child .ntable-name,
+.ntable-row-add .ntable-name { padding-left: 26px; }
+.ntable-row-child .ntable-name-text { font-weight: 400; color: var(--text-2); }
+/* Third level — the foods inside a group inside a day. Indentation carries the
+   nesting on its own, so these read at the same weight and colour as the group
+   rows above them. */
+.ntable-row-grandchild td { color: var(--text-2); }
+.ntable-row-grandchild td.is-zero { color: var(--muted-dim); }
+.ntable-row-grandchild .ntable-name,
+.ntable-row-food-add .ntable-name { padding-left: 46px; }
+.ntable-row-grandchild .ntable-name-text { font-weight: 400; color: var(--text-2); }
+/* Controls live in the sticky name column, so they stay reachable no matter how
+   far the nutrient columns are scrolled. */
+.ntable-name { max-width: 260px; }
+.ntable-child-controls { display: flex; align-items: center; gap: 3px; margin-top: 2px; }
+/* Parent rows are disclosure buttons: the whole name, caret included, is the
+   hit target. */
+.ntable-disclosure {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+/* Drawn, not typed: a centred path turns in place when the row opens, where the
+   `▸` glyph — off-centre in its own em box — shifted as well as rotated. */
+.ntable-caret {
+  flex: none;
+  width: 11px;
+  height: 11px;
+  color: var(--muted);
+  transition: transform 0.12s ease;
+}
+/* The group row's caret sits a step down from the day's, but stays clickable. */
+.ntable-disclosure-child .ntable-caret { width: 10px; height: 10px; }
+/* A name being typed is a box, so the caret can't take the whole row with it —
+   it shrinks to itself and sits beside the input. */
+.ntable-disclosure-caret { width: auto; flex: none; }
+.ntable-name-edit { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.ntable-name-input {
+  min-width: 0;
+  flex: 1;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 6px;
+}
+.ntable-name-input::placeholder { color: var(--muted); }
+.ntable-name-input:hover { border-color: var(--accent); }
+.ntable-name-input:focus { outline: none; border-color: var(--accent); }
+/* An ad-hoc group that hasn't been named yet, reading as the placeholder it
+   stands in for rather than as a name of its own. */
+.ntable-name-untitled { color: var(--muted); font-style: italic; }
+/* "Copy this group into…", in the name cell rather than the actions column —
+   that column's width is measured from its contents and pins every row, so a
+   picker there would widen it the whole way down. */
+.ntable-copy-select {
+  min-width: 0;
+  flex: 1;
+  background: var(--card-2);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 6px;
+}
+.ntable-copy-select:focus { outline: none; }
+.ntable-disclosure[aria-expanded="true"] .ntable-caret { transform: rotate(90deg); }
+.ntable-disclosure:hover .ntable-caret { color: var(--text); }
+.ntable-qty-btn {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 5px;
+  cursor: pointer;
+}
+.ntable-qty-btn:hover { color: var(--text); border-color: var(--accent); }
+/* Removing a food from a group, or a group from a day, now happens in the pinned
+   actions column — see .ntable-icon-btn. */
+.ntable-qty-input {
+  /* Holds an amount in the food's unit (up to "137.5"), not a servings count. */
+  width: 56px;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  text-align: center;
+  padding: 2px 2px;
+  -moz-appearance: textfield;
+}
+.ntable-qty-input::-webkit-outer-spin-button,
+.ntable-qty-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.ntable-qty-input:focus { outline: none; border-color: var(--accent); }
+/* A row of the food table being edited: a box in every nutrient column, and one
+   for the serving and its unit. Narrower than an amount box — there are
+   forty-odd nutrient columns across, and the boxes must not widen the table. */
+.ntable-cell-input { width: 46px; text-align: right; }
+.ntable-lead-input { width: 48px; text-align: left; }
+.ntable-child-serving { font-size: 10px; color: var(--muted); margin-left: 2px; }
+/* Dragging a food row. The grip hangs back into the row's indent — 17px of it
+   plus a 4px gap — so adding it doesn't shove every food name sideways out of
+   line with the group above. */
+.ntable-drag-name { display: flex; align-items: flex-start; gap: 4px; }
+.ntable-row-child .ntable-drag-name,
+.ntable-row-grandchild .ntable-drag-name { margin-left: -21px; }
+.ntable-drag-name-main { min-width: 0; flex: 1; }
+.ntable-drag-handle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 3px;
+  color: var(--muted-dim);
+  cursor: grab;
+  /* Or the phone scrolls the table instead of picking the row up. */
+  touch-action: none;
+}
+.ntable-drag-handle:hover { color: var(--text); }
+.ntable tbody tr.is-dragging th,
+.ntable tbody tr.is-dragging td { opacity: 0.4; }
+/* Where the row would land. Absolutely placed inside the scroller, so it rides
+   with the rows rather than hovering over a fixed spot on screen. */
+.ntable-drop-line {
+  position: absolute;
+  left: 0;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 2px;
+  pointer-events: none;
+  z-index: 6;
+}
+/* The grip keeps its cursor for the whole drag, wherever the pointer wanders,
+   and nothing selects text while a row is in hand. */
+body.is-row-dragging { cursor: grabbing; user-select: none; }
+body.is-row-dragging .ntable-drag-handle { cursor: grabbing; }
+/* Nested rows keep only the faint grid rule between them, so a group and its
+   foods read as one block under the parent's stronger line. */
+.ntable-row-child td,
+.ntable-row-add td,
+.ntable-row-grandchild td,
+.ntable-row-food-add td,
+.ntable-row-child th,
+.ntable-row-add th,
+.ntable-row-grandchild th,
+.ntable-row-food-add th { border-bottom-color: var(--grid); }
+.ntable-add-input {
+  background: none;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 8px;
+  width: 170px;
+  max-width: 100%;
+}
+/* The Templates tab's add row, on one line always: these controls belong to the
+   row above them, and wrapping onto a second line reads as another row. The box
+   shrinks to make that happen but never grows into the leftover space — it holds
+   a name being typed against a datalist, and a box the width of the column would
+   only look like it wanted a sentence. */
+.ntable-add-row { display: flex; flex-wrap: nowrap; align-items: center; gap: 5px; }
+.ntable-add-row .ntable-add-input { flex: 0 1 112px; min-width: 62px; width: auto; }
+.ntable-add-row .ntable-add-btn { flex: 0 0 auto; }
+.ntable-add-btn {
+  background: none;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.ntable-add-btn:hover { color: var(--text); border-color: var(--accent); }
+.ntable-add-input::placeholder { color: var(--muted); }
+.ntable-add-input:hover { border-color: var(--accent); }
+.ntable-add-input:focus { outline: none; border-color: var(--accent); border-style: solid; }
+
+.ntable-row-compare { color: var(--purple); }
+.ntable-row-compare th,
+.ntable-row-compare td { font-weight: 600; }
+/* Body cells dim their zeros to keep long food lists scannable; a pinned row is
+   a single band to read across, so its zeros take the row's own colour. */
+.ntable thead .ntable-pinned td.is-zero { color: inherit; }
+/* The compare row holds a day's totals, so it reads exactly as the same day
+   does on the Food Logs tab (#tab-food-logs .ntable-row-parent): purple
+   for the row, but zeros dimmed back out of it — 46 columns of purple noughts
+   would drown the numbers that matter, which is why this overrides the pinned
+   rule above rather than inheriting it. */
+.ntable thead .ntable-row-compare td.is-zero { color: var(--muted-dim); }
+/* Except where the day misses its bounds: short of the min in yellow,
+   past the max in orange. After the zero rule on purpose — a nutrient the day
+   has none of at all is the clearest miss there is, so the flag has to beat the
+   dimmed zero as well as the row's purple. Same order as the Food Logs tab. */
+.ntable thead .ntable-row-compare td.ntable-under-min { color: var(--yellow); }
+.ntable thead .ntable-row-compare td.ntable-over-max { color: var(--orange); }
+/* Two pickers, one look: the compare row's, and the Templates table's day row —
+   both stand in for a name in the Item column, both purple like the row they
+   belong to. */
+.ntable-compare-select,
+.ntable-log-select {
+  width: 100%;
+  max-width: 200px;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--purple);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  /* Long names truncate with an ellipsis rather than being cut mid-letter.
+     The native arrow reserves its own room and gives no control over the space
+     either side of it, so it's replaced with a background chevron: the arrow
+     sits 7px off the right edge, and padding-right leaves a 3px gap between the
+     ellipsis and the arrow. */
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23c084fc' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='3 4.5 6 8 9 4.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 7px center;
+  background-size: 10px 10px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding: 3px 20px 3px 6px;
+  cursor: pointer;
+}
+.ntable-compare-select:focus,
+.ntable-log-select:focus { outline: none; border-color: var(--purple); }
+.ntable-log-select:hover { border-color: var(--purple); }
+/* The targets row is a yardstick, not a record — set it apart from the days. */
+/* Colour goes on the row so zero cells can inherit it — see the .is-zero reset
+   below. The floor and ceiling either side of the target are the same blue at
+   two removes: lighter for the min, deeper for the max, so a glance down the
+   three rows reads as one range rather than three unrelated lines. */
+.ntable-row-target { color: var(--accent); }
+.ntable-row-target-min { color: var(--accent-light); }
+.ntable-row-target-max { color: var(--accent-deep); }
+.ntable-row-target th,
+.ntable-row-target td,
+.ntable-row-target-min th,
+.ntable-row-target-min td,
+.ntable-row-target-max th,
+.ntable-row-target-max td { font-weight: 600; }
+/* The band's top edge. Not pinned to the max row: min and max fold away with
+   the min/max toggle, which would take the edge with them and leave the target
+   butted straight against the column labels. thead's first child is always the
+   label row, so the first pinned row — whichever one it turns out to be — is
+   always the second. */
+.ntable thead tr.ntable-pinned:nth-child(2) th,
+.ntable thead tr.ntable-pinned:nth-child(2) td { border-top: 2px solid var(--border); }
+.ntable-row-target .ntable-name-text { color: var(--accent); }
+.ntable-row-target-min .ntable-name-text { color: var(--accent-light); }
+.ntable-row-target-max .ntable-name-text { color: var(--accent-deep); }
+
+/* Daily nutrient targets — how a log stacks up against the targets row
+   in raw.csv, scored inside each detail-grid cell. Three states: short of a
+   floor, on target, or past a ceiling. */
+.nutrition-cell-goal { display: flex; flex-direction: column; gap: 2px; margin-top: 3px; }
+.nutrition-cell-bar {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+.nutrition-cell-bar > span { display: block; height: 100%; border-radius: 2px; }
+.nutrition-cell-pct { font-size: 9px; color: var(--muted); }
+.nutrition-cell-goal[data-state="under"] .nutrition-cell-bar > span { background: var(--amber); }
+.nutrition-cell-goal[data-state="met"] .nutrition-cell-bar > span { background: var(--green); }
+.nutrition-cell-goal[data-state="over"] .nutrition-cell-bar > span { background: #f87171; }
+
+/* Nutrition — add a food */
+.nutrition-add-btn {
+  margin-left: auto;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.nutrition-add-btn.open { border-color: var(--accent); color: var(--accent); }
+/* Add food takes the header's spring; the AI helper beside it settles on the
+   header's own gap rather than the two splitting the space. */
+.nutrition-add-btn + .nutrition-add-btn { margin-left: 0; }
+/* Put a just-deleted template back. Amber rather than accent: it undoes
+   something rather than starting it, and it shouldn't compete with the button
+   beside it for the eye. */
+.log-undo-btn {
+  margin-left: auto;
+  background: var(--card-2);
+  border: 1px solid var(--amber);
+  border-radius: 8px;
+  color: var(--amber);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+/* Undo takes the header's spring while it's showing, so New template settles
+   beside it on the header's own gap instead of the two splitting the space. */
+.log-undo-btn:not([hidden]) + .nutrition-add-btn { margin-left: 0; }
+.nutrition-add {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.nutrition-add-text {
+  width: 100%;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+.nutrition-add-text::placeholder { color: var(--muted); }
+.nutrition-add-text:focus { outline: none; border-color: var(--accent); }
+.nutrition-photo-btn,
+.nutrition-lookup-btn,
+.nutrition-save-btn,
+.nutrition-replace-btn,
+.nutrition-cancel-btn,
+.nutrition-photo-clear {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+.nutrition-lookup-btn, .nutrition-save-btn {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--text);
+}
+.nutrition-lookup-btn:disabled { opacity: 0.6; cursor: default; }
+.nutrition-photo-clear { font-weight: 400; color: var(--muted); padding: 4px 8px; font-size: 12px; }
+.nutrition-photo-name { font-size: 12px; color: var(--muted); }
+.nutrition-photo-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.nutrition-photo-thumb { position: relative; }
+.nutrition-photo-thumb img {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  display: block;
+}
+.nutrition-photo-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+}
+.nutrition-photo-remove:hover { color: var(--text); }
+/* One gap for the whole row, Cancel and Clear included — they lead the row in
+   the AI panels, and setting them apart from the buttons they precede just reads
+   as a hole in the middle of it. */
+.nutrition-add-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.nutrition-add-status { font-size: 12px; color: var(--muted); }
+.nutrition-add-status.error, .nutrition-add-status[data-kind="error"] { color: var(--amber); }
+.nutrition-review {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.nutrition-review-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.nutrition-review-name { font-size: 15px; font-weight: 600; }
+.nutrition-review-serving { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.nutrition-review-cal { font-size: 17px; font-weight: 600; white-space: nowrap; }
+.nutrition-review-stats { font-size: 13px; }
+.nutrition-review-notes { font-size: 12px; color: var(--muted); }
+.nutrition-review-sources { font-size: 11px; color: var(--muted); word-break: break-word; }
+.nutrition-review-dupe {
+  font-size: 12px;
+  color: var(--amber);
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.25);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.nutrition-review-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* Nutrition — full nutrient breakdown inside the review card */
+.nutrition-review-detail { border-top: 1px solid var(--border); margin-top: 2px; }
+
+/* Nutrition — AI helper panel: a prose answer, then any proposed rows */
+.nutrition-ai-result {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.nutrition-ai-answer { font-size: 13px; line-height: 1.55; }
+.nutrition-ai-answer > :first-child { margin-top: 0; }
+.nutrition-ai-answer > :last-child { margin-bottom: 0; }
+.nutrition-ai-answer h1, .nutrition-ai-answer h2, .nutrition-ai-answer h3, .nutrition-ai-answer h4 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 12px 0 4px;
+}
+.nutrition-ai-answer p { margin: 0 0 8px; }
+.nutrition-ai-answer ul, .nutrition-ai-answer ol { margin: 0 0 8px; padding-left: 20px; }
+.nutrition-ai-answer li { margin-bottom: 2px; }
+.nutrition-ai-answer code {
+  background: var(--card);
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-size: 12px;
+}
+/* Answers lean on tables; the panel is narrow on a phone, so let one scroll
+   rather than stretching the card. */
+.nutrition-ai-answer table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin: 0 0 8px;
+}
+.nutrition-ai-answer th, .nutrition-ai-answer td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  text-align: left;
+  white-space: nowrap;
+}
+.nutrition-ai-answer th { color: var(--muted); font-weight: 600; }
+.nutrition-ai-proposals { display: flex; flex-direction: column; gap: 8px; }
+.nutrition-ai-proposals-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 4px 0 0;
+}
+.nutrition-diff {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.nutrition-diff.is-applied { opacity: 0.7; border-color: var(--green); }
+.nutrition-diff-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.nutrition-diff-name { font-size: 14px; font-weight: 600; }
+.nutrition-diff-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+.nutrition-diff-badge.is-new { color: var(--amber); border-color: var(--amber); }
+.nutrition-diff-count { font-size: 11px; color: var(--muted); margin-left: auto; }
+.nutrition-diff-reason { font-size: 12px; color: var(--muted); }
+.nutrition-diff-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 6px 12px;
+}
+.nutrition-diff-cell { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.nutrition-diff-label {
+  font-size: 10px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nutrition-diff-values { display: flex; align-items: baseline; gap: 4px; font-size: 13px; }
+.nutrition-diff-from { color: var(--muted); text-decoration: line-through; }
+.nutrition-diff-arrow { color: var(--muted); font-size: 11px; }
+.nutrition-diff-to { font-weight: 600; }
+.nutrition-diff-target { font-size: 10px; color: var(--muted); }
+
+/* Nutrition — a proposed day inside the templates helper */
+.nutrition-plan { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.nutrition-plan-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 4px 10px;
+  font-size: 13px;
+}
+.nutrition-plan-cal { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.nutrition-plan-foods {
+  grid-column: 1 / -1;
+  list-style: none;
+  margin: 0;
+  padding-left: 14px;
+  border-left: 1px solid var(--border);
+}
+.nutrition-plan-food { font-size: 12px; color: var(--muted); }
+.nutrition-plan-changes {
+  list-style: none;
+  margin: 0;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+}
+.nutrition-plan-change-kind {
+  display: inline-block;
+  min-width: 58px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.nutrition-plan-change[data-kind="added"] .nutrition-plan-change-kind { color: var(--green); }
+.nutrition-plan-change[data-kind="removed"] .nutrition-plan-change-kind { color: var(--amber); }
+
+/* Groups */
+.groups-content { display: flex; flex-direction: column; gap: 6px; }
+.group-builder {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.group-name-input {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 600;
+  padding: 8px 10px;
+}
+.group-name-input::placeholder { color: var(--muted); font-weight: 400; }
+.group-name-input:focus { outline: none; border-color: var(--accent); }
+.group-picker { position: relative; }
+/* Overlays the fields below it like a normal autocomplete menu, rather than
+   pushing them down as the list grows. .group-picker is the positioned parent. */
+.group-food-results {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  max-height: 260px;
+  overflow-y: auto;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+}
+.group-food-result {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.group-food-result:last-child { border-bottom: 0; }
+.group-food-result:hover,
+.group-food-result.is-active { background: var(--card-2); }
+.group-food-result.is-active { box-shadow: inset 2px 0 0 var(--accent); }
+.group-food-meta { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.group-items { display: flex; flex-direction: column; gap: 4px; }
+.group-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+.group-item.missing { border-color: var(--amber); }
+.group-item-name { flex: 1; min-width: 0; font-size: 13px; display: flex; flex-direction: column; }
+.group-item-serving { font-size: 10px; color: var(--muted); }
+.group-item-qty { display: flex; align-items: center; gap: 4px; }
+/* The box holds an amount now, not a serving count, so its unit has to travel
+   with it — the serving line under the name that used to carry it is gone. */
+.group-item-unit { font-size: 11px; color: var(--muted); min-width: 34px; }
+.group-qty-btn {
+  width: 26px;
+  height: 26px;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.group-qty-input {
+  width: 54px;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  text-align: center;
+  padding: 4px;
+}
+.group-qty-input:focus { outline: none; border-color: var(--accent); }
+.group-item-cal { font-size: 13px; font-weight: 600; white-space: nowrap; min-width: 58px; text-align: right; }
+.group-item-remove {
+  background: none;
+  border: 0;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+}
+.group-item-remove:hover { color: var(--amber); }
+.group-empty-hint { font-size: 12px; color: var(--muted); padding: 6px 2px; }
+.group-totals {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* .nutrition-bar's `flex: 1 1 140px` is sized for the row-flex it normally sits
+   in (.nutrition-row-viz). Here the container is a column, so that basis lands
+   on the height and flex-grow stretches it further. `flex: none` drops both, so
+   the bar's own 8px height applies — same as everywhere else. */
+.group-totals .nutrition-bar { flex: none; }
+.group-totals-head { display: flex; justify-content: space-between; align-items: baseline; }
+.group-totals-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.group-totals-cal { font-size: 17px; font-weight: 600; }
+.group-builder-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.group-card {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.group-card.open { border-color: var(--accent-soft); }
+.group-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.group-card-main { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.group-card-name { font-size: 14px; font-weight: 600; }
+.group-card-foods {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.group-missing {
+  font-size: 11px;
+  color: var(--amber);
+  margin-top: 6px;
+}
+.group-card-actions { display: flex; gap: 8px; margin-top: 10px; }
+.group-edit-btn, .group-delete-btn {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.group-edit-btn:hover { color: var(--text); border-color: var(--accent); }
+.group-delete-btn:hover { color: var(--amber); border-color: var(--amber); }
+
+/* Nutrition — delete a food */
+.nutrition-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 4px;
+}
+.nutrition-delete-btn {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.nutrition-delete-btn:hover { color: var(--amber); border-color: var(--amber); }
+.nutrition-delete-btn.armed { color: var(--amber); border-color: var(--amber); font-weight: 600; }
+.nutrition-delete-btn:disabled { opacity: 0.6; cursor: default; }
+.nutrition-delete-status { font-size: 11px; color: var(--muted); }
+
+/* The `hidden` attribute must beat these components' own display rules —
+   a UA `[hidden] { display: none }` loses to any author `display` declaration. */
+.nutrition-add[hidden],
+.nutrition-legend[hidden],
+.nutrition-review[hidden],
+.nutrition-ai-result[hidden],
+.nutrition-photo-list[hidden],
+.nutrition-detail[hidden],
+.group-builder[hidden],
+.group-totals[hidden],
+.group-food-results[hidden],
+.group-items[hidden] {
+  display: none;
+}
+
+/* Food log — the groups that make up a log */
+.log-group-list {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.log-group-list { gap: 8px; }
+.log-group-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 13px;
+}
+/* Name over its food summary; min-width:0 lets the summary ellipsize instead
+   of pushing the calorie column off the row. */
+.log-group-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.log-group-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-group-foods {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.log-group-cal { font-weight: 600; white-space: nowrap; }
+.group-builder[hidden],
+.log-group-list[hidden] { display: none; }

@@ -1,0 +1,16 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"name": "dropbox",
+			"path": "../../Library/CloudStorage/Dropbox/steve"
+		},
+		{
+			"name": "onedrive",
+			"path": "../../Library/CloudStorage/OneDrive-Personal/steve"
+		}
+	],
+	"settings": {}
+}

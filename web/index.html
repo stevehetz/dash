@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0d10" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Dash</title>
+  <link rel="icon" type="image/png" href="/avatars/dash7.png" />
+  <link rel="apple-touch-icon" href="/avatars/dash7.png" />
+  <link rel="manifest" href="/web/manifest.json" />
+
+  <link rel="stylesheet" href="/web/styles.css" />
+</head>
+<body>
+  <!-- app.js loads at the end of the document, so by the time it read the saved
+       collapse state the sidebar had already painted open and then animated
+       shut. Nothing above has rendered yet at this point, so setting the class
+       here means the first paint is already correct — and, the sidebar not
+       existing yet, there's no width change for the transition to animate. -->
+  <script>
+    try {
+      // Nutrition lands collapsed whatever the saved choice is (applyPage in
+      // app.js does the same for in-app navigation) — its own tabs by path,
+      // so a deep link doesn't paint wide and then narrow. Not exhaustive:
+      // the legacy aliases still route through app.js.
+      var navRail = localStorage.getItem("dash-nav-collapsed") === "1"
+        || /^\/(nutrition|groups|food-logs)(\/|$)/.test(location.pathname);
+      if (navRail) document.body.classList.add("nav-collapsed");
+    } catch {}
+  </script>
+
+  <!-- Primary nav. Fixed to the left edge: always on at desktop widths, an
+       off-canvas drawer (backdrop + slide-in) below the sidebar breakpoint.
+       Its links are rendered by app.js from the PAGES config. -->
+  <div class="nav-backdrop" id="nav-backdrop"></div>
+  <aside class="sidebar" id="sidebar" aria-label="Main navigation">
+    <!-- The brand is the way home, in the sidebar and in the header both — one
+         of the two is always on screen: the sidebar's at desktop widths (it
+         survives the collapse to the icon rail), the header's below them. -->
+    <button class="sidebar-brand brand-home" id="sidebar-brand" type="button" aria-label="Go to Home">
+      <img src="/avatars/dash7.png" alt="" class="brand-logo" />
+      <span>Dash</span>
+    </button>
+    <nav class="side-nav" id="side-nav"></nav>
+  </aside>
+
+  <!-- Sticky top area: header + tabs travel together -->
+  <div class="sticky-top">
+  <header>
+    <div class="brand">
+      <button class="nav-toggle" id="nav-toggle" aria-label="Open navigation" aria-expanded="false" aria-controls="sidebar">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <line x1="3" y1="6" x2="21" y2="6"></line>
+          <line x1="3" y1="12" x2="21" y2="12"></line>
+          <line x1="3" y1="18" x2="21" y2="18"></line>
+        </svg>
+      </button>
+      <button class="brand-home" id="header-brand" type="button" aria-label="Go to Home">
+        <img src="/avatars/dash7.png" alt="" class="brand-logo" />
+      </button>
+      <h1 id="page-title">Dash</h1>
+    </div>
+    <!-- Secondary nav: the sub-tabs of the current page only, sitting in the
+         header beside the page title. app.js shows the buttons whose data-page
+         matches, and hides the whole bar for pages that have a single tab. Keep
+         tabs grouped by page — DOM order is swipe order. -->
+    <div class="tabs-wrap">
+      <nav class="tabs" role="tablist">
+        <!-- Not `hidden`: app.js reads the live tabs as .tab:not([hidden]) — that
+             marks a tab as switched off, and a hidden Home takes the whole Home
+             page out of the sidebar, the home grid and hash routing with it. It
+             doesn't show in the bar anyway: Home is a single-tab page, and the
+             whole secondary bar hides for those. -->
+        <button class="tab" data-tab="home" data-page="home" role="tab" aria-selected="false">Home</button>
+        <button class="tab" data-tab="health" data-page="health" role="tab" aria-selected="false">Vitals</button>
+        <button class="tab" data-tab="nutrition" data-page="nutrition" role="tab" aria-selected="false">Food</button>
+        <button class="tab" data-tab="groups" data-page="nutrition" role="tab" aria-selected="false">Groups</button>
+        <button class="tab" data-tab="food-logs" data-page="nutrition" role="tab" aria-selected="false">Logs</button>
+        <button class="tab" data-tab="finances" data-page="finances" role="tab" aria-selected="false">Finances</button>
+        <button class="tab" data-tab="jobs" data-page="jobs" role="tab" aria-selected="false">Jobs</button>
+        <button class="tab" data-tab="library" data-page="library" role="tab" aria-selected="false">Library</button>
+        <button class="tab" data-tab="system" data-page="system" role="tab" aria-selected="false">Config</button>
+      </nav>
+      <button class="tabs-scroll-hint tabs-scroll-hint-back" id="tabs-scroll-hint-back" aria-label="Scroll tabs back" hidden>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="15 6 9 12 15 18"></polyline>
+        </svg>
+      </button>
+      <button class="tabs-scroll-hint" id="tabs-scroll-hint" aria-label="Scroll tabs" hidden>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="9 6 15 12 9 18"></polyline>
+        </svg>
+      </button>
+    </div>
+    <div class="header-right">
+      <span id="status" class="status" aria-live="polite">connecting…</span>
+    </div>
+  </header>
+  </div><!-- /.sticky-top -->
+
+  <main>
+    <!-- Home: one card button per page. Rendered by app.js from PAGES. -->
+    <section class="tab-panel" id="tab-home" hidden>
+      <div class="home-grid" id="home-grid"></div>
+    </section>
+
+    <section class="tab-panel" id="tab-jobs" hidden>
+      <div class="card" id="jobs-card">
+        <div class="card-header">
+          <h2>Jobs</h2>
+          <span class="count" id="jobs-count"></span>
+          <label class="jobs-hide-inactive-toggle">
+            <span class="switch">
+              <input type="checkbox" id="jobs-hide-inactive" checked />
+              <span class="switch-track"></span>
+            </span>
+            Hide inactive
+          </label>
+          <button id="add-job-btn" class="add-job-btn" aria-label="Add job">+ New</button>
+        </div>
+        <div id="jobs-list" class="job-list">
+          <div class="empty">Loading…</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="tab-system" hidden>
+      <div class="card" id="system-card">
+        <div class="card-header">
+          <h2>System</h2>
+          <span class="count" id="system-count"></span>
+          <span class="system-status" id="system-status"></span>
+          <div class="system-actions">
+            <button id="system-reload-btn" class="btn">Reload</button>
+            <button id="system-save-btn" class="btn primary" disabled>Save</button>
+            <button id="system-restart-btn" class="btn system-restart-btn">Restart</button>
+          </div>
+        </div>
+        <div id="system-path" class="system-path"></div>
+        <div id="system-list" class="system-list">
+          <div class="empty">Loading…</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="tab-finances" hidden>
+      <div class="card" id="finances-card">
+        <div class="card-header">
+          <h2>Finances</h2>
+          <span class="count" id="finances-count"></span>
+        </div>
+        <div id="finances-summary" class="fin-summary"></div>
+        <div id="finances-list" class="finances-list">
+          <div class="empty">Loading…</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="tab-library" hidden>
+      <!-- One action bar for the open file: its name, and the two things you
+           can do with it. Above the browser rather than in it, so it stays put
+           while the sidebar and the content column change underneath. On mobile
+           the Edit half moves to the footer bar at the bottom of the screen. -->
+      <div class="library-bar">
+        <span class="library-bar-name" id="library-file-name"></span>
+        <!-- Starts hidden: nothing is open on first paint, and only a text
+             file that's open puts it back (see loadLibraryItem). -->
+        <div class="md-edit-actions">
+          <button id="library-edit-btn" class="md-edit-btn" hidden>Edit</button>
+        </div>
+        <button class="nutrition-add-btn" id="library-ai-btn" type="button">Ask Dash</button>
+      </div>
+
+      <div class="nutrition-add" id="library-ai" hidden>
+        <textarea id="library-ai-text" class="nutrition-add-text" rows="3"
+          placeholder="Ask about the file you have open, or tell it what to change — e.g. what is this, or add a row for last week"></textarea>
+        <div class="nutrition-add-actions">
+          <button class="nutrition-cancel-btn" id="library-ai-clear" type="button" hidden>Clear</button>
+          <button class="nutrition-cancel-btn" id="library-ai-cancel" type="button" hidden>Cancel</button>
+          <label class="nutrition-photo-btn" for="library-ai-file">Add photos</label>
+          <input type="file" id="library-ai-file" accept="image/*" multiple hidden />
+          <button class="nutrition-lookup-btn" id="library-ai-submit" type="button" disabled>Submit</button>
+          <span class="nutrition-photo-name" id="library-ai-photo-name"></span>
+          <button class="nutrition-photo-clear" id="library-ai-photo-clear" type="button" hidden>Remove all</button>
+          <span class="nutrition-add-status" id="library-ai-status"></span>
+        </div>
+        <div class="nutrition-photo-list" id="library-ai-photo-list" hidden></div>
+        <div class="nutrition-ai-result" id="library-ai-result" hidden></div>
+      </div>
+
+      <div class="notes-layout">
+        <aside class="notes-sidebar" id="library-sidebar">
+          <div class="card-header">
+            <!-- Expand-all leads the row, ahead of the heading — it acts on the
+                 tree below, so it reads as a control of the list rather than
+                 something tacked onto the title. The chevron stays at the far
+                 right, where it flex-grows to push itself there. -->
+            <button class="notes-sidebar-toggle" id="library-expand-all" aria-label="Expand/collapse all folders" title="Expand all">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="4" y="4" width="16" height="16" rx="3" />
+                <line x1="8" y1="12" x2="16" y2="12" />
+                <line class="library-expand-plus" x1="12" y1="8" x2="12" y2="16" />
+              </svg>
+            </button>
+            <h2>Dashbook</h2>
+            <button class="notes-sidebar-toggle" id="library-sidebar-toggle" aria-expanded="true" aria-label="Toggle file list">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </button>
+          </div>
+          <ul id="library-list" class="notes-list">
+            <li class="empty">Loading…</li>
+          </ul>
+        </aside>
+        <div class="notes-content-col">
+          <div class="notes-placeholder" id="library-placeholder">
+            <svg viewBox="0 0 24 24" width="192" height="192" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="16" rx="3" />
+              <circle cx="9" cy="11" r="1.5" />
+              <circle cx="15" cy="11" r="1.5" />
+              <path d="M8.5 16c.8 1 2 1.5 3.5 1.5s2.7-.5 3.5-1.5" />
+              <line x1="9" y1="4" x2="9" y2="2" />
+              <line x1="15" y1="4" x2="15" y2="2" />
+            </svg>
+          </div>
+          <article class="notes-content card" id="library-content" hidden>
+            <div id="library-body" class="markdown-body"></div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="tab-health" hidden>
+      <div class="card" id="health-card">
+        <div class="card-header">
+          <h2>Health</h2>
+          <span class="count" id="health-count"></span>
+        </div>
+        <div id="health-content" class="health-content">
+          <div class="empty">Loading…</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="tab-nutrition" hidden>
+      <div class="card" id="nutrition-card">
+        <div class="card-header">
+          <h2>Food</h2>
+          <span class="count" id="nutrition-count"></span>
+          <button class="nutrition-add-btn" id="nutrition-add-btn" type="button">Add food</button>
+          <button class="nutrition-add-btn" id="nutrition-ai-btn" type="button">Ask Dash</button>
+        </div>
+
+        <div class="nutrition-add" id="nutrition-add" hidden>
+          <textarea id="nutrition-add-text" class="nutrition-add-text" rows="2"
+            placeholder="Describe the food — e.g. 3 oz of carrots, or 1 cup Heinens plain greek yogurt"></textarea>
+          <div class="nutrition-add-actions">
+            <label class="nutrition-photo-btn" for="nutrition-add-file">Add photos</label>
+            <input type="file" id="nutrition-add-file" accept="image/*" multiple hidden />
+            <button class="nutrition-lookup-btn" id="nutrition-lookup-btn" type="button" disabled>Submit</button>
+            <span class="nutrition-photo-name" id="nutrition-photo-name"></span>
+            <button class="nutrition-photo-clear" id="nutrition-photo-clear" type="button" hidden>Remove all</button>
+            <span class="nutrition-add-status" id="nutrition-add-status"></span>
+          </div>
+          <div class="nutrition-photo-list" id="nutrition-photo-list" hidden></div>
+          <div class="nutrition-review" id="nutrition-review" hidden></div>
+        </div>
+
+        <div class="nutrition-add" id="nutrition-ai" hidden>
+          <textarea id="nutrition-ai-text" class="nutrition-add-text" rows="3"
+            placeholder="Ask about the table, or ask for a change — e.g. which foods carry my magnesium, or research current guidance for a 190 lb male"></textarea>
+          <div class="nutrition-add-actions">
+            <button class="nutrition-cancel-btn" id="nutrition-ai-clear" type="button" hidden>Clear</button>
+            <button class="nutrition-cancel-btn" id="nutrition-ai-cancel" type="button" hidden>Cancel</button>
+            <label class="nutrition-photo-btn" for="nutrition-ai-file">Add photos</label>
+            <input type="file" id="nutrition-ai-file" accept="image/*" multiple hidden />
+            <button class="nutrition-lookup-btn" id="nutrition-ai-submit" type="button" disabled>Submit</button>
+            <span class="nutrition-photo-name" id="nutrition-ai-photo-name"></span>
+            <button class="nutrition-photo-clear" id="nutrition-ai-photo-clear" type="button" hidden>Remove all</button>
+            <span class="nutrition-add-status" id="nutrition-ai-status"></span>
+          </div>
+          <div class="nutrition-photo-list" id="nutrition-ai-photo-list" hidden></div>
+          <div class="nutrition-ai-result" id="nutrition-ai-result" hidden></div>
+        </div>
+
+        <div class="nutrition-controls">
+          <input type="search" id="nutrition-search" class="nutrition-search" placeholder="Search foods…" autocomplete="off" />
+          <div class="view-toggle" id="nutrition-view" role="group" aria-label="View">
+            <button class="view-toggle-btn" data-view="table" type="button">Table</button>
+            <button class="view-toggle-btn" data-view="cards" type="button">Cards</button>
+          </div>
+          <!-- Which of the pinned rows the table's header carries, one checkbox
+               each. Table view only: every row it governs is part of the table's
+               header. Food tab only too — the Logs tab has its own min/max
+               button and its own idea of the band. -->
+          <div class="table-config" id="nutrition-config" hidden>
+            <button class="table-config-btn" id="nutrition-config-btn" type="button"
+              aria-haspopup="true" aria-expanded="false" aria-label="Table settings" title="Table settings">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+              ><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            </button>
+            <div class="table-config-menu" id="nutrition-config-menu" role="group" aria-label="Table settings" hidden>
+              <label class="table-config-item">
+                <input type="checkbox" data-cfg="max" /> Daily max row
+              </label>
+              <label class="table-config-item">
+                <input type="checkbox" data-cfg="target" /> Daily target row
+              </label>
+              <label class="table-config-item">
+                <input type="checkbox" data-cfg="min" /> Daily min row
+              </label>
+              <label class="table-config-item">
+                <input type="checkbox" data-cfg="log" /> Food log row
+              </label>
+              <label class="table-config-item is-sub">
+                <input type="checkbox" data-cfg="logColors" /> Min/max colors
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="nutrition-legend" id="nutrition-legend" hidden>
+          <span class="nutrition-key"><i class="nutrition-swatch" data-macro="carbs"></i>Carbs</span>
+          <span class="nutrition-key"><i class="nutrition-swatch" data-macro="protein"></i>Protein</span>
+          <span class="nutrition-key"><i class="nutrition-swatch" data-macro="fat"></i>Fat</span>
+          <span class="nutrition-legend-note">share of calories</span>
+        </div>
+        <div id="nutrition-content" class="nutrition-content">
+          <div class="empty">Loading…</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="tab-groups" hidden>
+      <div class="card" id="groups-card">
+        <div class="card-header">
+          <h2>Groups</h2>
+          <span class="count" id="groups-count"></span>
+          <button class="nutrition-add-btn" id="group-new-btn" type="button">New group</button>
+        </div>
+
+        <div class="group-builder" id="group-builder" hidden>
+          <input type="text" id="group-name" class="group-name-input" placeholder="Group name — e.g. Breakfast bowl" autocomplete="off" />
+          <div class="group-picker">
+            <input type="search" id="group-food-search" class="nutrition-search" placeholder="Search foods to add…" autocomplete="off" />
+            <div class="group-food-results" id="group-food-results" hidden></div>
+          </div>
+          <div class="group-items" id="group-items"></div>
+          <div class="group-totals" id="group-totals" hidden></div>
+          <div class="group-builder-actions">
+            <button class="nutrition-save-btn" id="group-save-btn" type="button">Save group</button>
+            <button class="nutrition-cancel-btn" id="group-cancel-btn" type="button">Cancel</button>
+            <span class="nutrition-add-status" id="group-status"></span>
+          </div>
+        </div>
+
+        <div class="nutrition-controls">
+          <div class="view-toggle" id="groups-view" role="group" aria-label="View">
+            <button class="view-toggle-btn" data-view="table" type="button">Table</button>
+            <button class="view-toggle-btn" data-view="cards" type="button">Cards</button>
+          </div>
+          <button class="expand-all-btn" id="groups-expand-all" type="button">Expand all</button>
+        </div>
+        <div id="groups-content" class="groups-content">
+          <div class="empty">Loading…</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="tab-food-logs" hidden>
+      <div class="card" id="log-card">
+        <div class="card-header">
+          <h2>Food Logs</h2>
+          <span class="count" id="logs-count"></span>
+          <!-- Appears once a log has been deleted and stays until it's used
+               or another delete replaces it — a deleted log is only gone from
+               food-logs.json, and everything needed to write it back is still here. -->
+          <button class="log-undo-btn" id="log-undo-btn" type="button" hidden></button>
+          <button class="nutrition-add-btn" id="log-new-btn" type="button">New log</button>
+          <button class="nutrition-add-btn" id="log-ai-btn" type="button">Ask Dash</button>
+        </div>
+
+        <div class="nutrition-add" id="log-ai" hidden>
+          <textarea id="log-ai-text" class="nutrition-add-text" rows="3"
+            placeholder="Ask about this log, or ask for a change — e.g. review this log against my targets, or build a training day around chicken and rice that hits 190 g protein"></textarea>
+          <div class="nutrition-add-actions">
+            <button class="nutrition-cancel-btn" id="log-ai-clear" type="button" hidden>Clear</button>
+            <button class="nutrition-cancel-btn" id="log-ai-cancel" type="button" hidden>Cancel</button>
+            <label class="nutrition-photo-btn" for="log-ai-file">Add photos</label>
+            <input type="file" id="log-ai-file" accept="image/*" multiple hidden />
+            <button class="nutrition-lookup-btn" id="log-ai-submit" type="button" disabled>Submit</button>
+            <span class="nutrition-photo-name" id="log-ai-photo-name"></span>
+            <button class="nutrition-photo-clear" id="log-ai-photo-clear" type="button" hidden>Remove all</button>
+            <span class="nutrition-add-status" id="log-ai-status"></span>
+          </div>
+          <div class="nutrition-photo-list" id="log-ai-photo-list" hidden></div>
+          <div class="nutrition-ai-result" id="log-ai-result" hidden></div>
+        </div>
+
+        <div class="group-builder" id="log-builder" hidden>
+          <input type="text" id="log-name" class="group-name-input" placeholder="Name — e.g. 2026.08.04" autocomplete="off" />
+          <div class="group-picker">
+            <!-- Placeholder set from JS: this searches saved groups or foods
+                 depending on SAVED_GROUPS_ENABLED. -->
+            <input type="search" id="log-group-search" class="nutrition-search" autocomplete="off" />
+            <div class="group-food-results" id="log-group-results" hidden></div>
+          </div>
+          <div class="group-items" id="log-items"></div>
+          <div class="group-totals" id="log-totals" hidden></div>
+          <div class="group-builder-actions">
+            <button class="nutrition-cancel-btn" id="log-cancel-btn" type="button">Cancel</button>
+            <button class="nutrition-save-btn" id="log-save-btn" type="button">Save log</button>
+            <span class="nutrition-add-status" id="log-status"></span>
+          </div>
+        </div>
+
+        <div class="nutrition-controls">
+          <!-- Table view shows one day at a time, picked from the day's own row
+               in the Item column; cards view lists them all. -->
+          <div class="view-toggle" id="logs-view" role="group" aria-label="View">
+            <button class="view-toggle-btn" data-view="table" type="button">Table</button>
+            <button class="view-toggle-btn" data-view="cards" type="button">Cards</button>
+          </div>
+          <button class="expand-all-btn" id="logs-expand-all" type="button">Expand all</button>
+          <!-- The Food tab's cog, minus its "Food log row" checkbox: the row that
+               would hide here is the day's own totals line, and its Item cell is
+               the picker for which day the table is showing. -->
+          <div class="table-config" id="logs-config" hidden>
+            <button class="table-config-btn" id="logs-config-btn" type="button"
+              aria-haspopup="true" aria-expanded="false" aria-label="Table settings" title="Table settings">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+              ><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            </button>
+            <div class="table-config-menu" id="logs-config-menu" role="group" aria-label="Table settings" hidden>
+              <label class="table-config-item">
+                <input type="checkbox" data-cfg="max" /> Daily max row
+              </label>
+              <label class="table-config-item">
+                <input type="checkbox" data-cfg="target" /> Daily target row
+              </label>
+              <label class="table-config-item">
+                <input type="checkbox" data-cfg="min" /> Daily min row
+              </label>
+              <label class="table-config-item">
+                <input type="checkbox" data-cfg="logColors" /> Log row min/max colors
+              </label>
+            </div>
+          </div>
+        </div>
+        <div id="logs-content" class="groups-content">
+          <div class="empty">Loading…</div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Mobile-only sticky footer for the Library's open text file. Lives at
+       body level so <main> scrolls between the sticky tabs and this bar.
+       Buttons delegate to the in-tab Edit/Cancel/Save handlers. -->
+  <div class="md-mobile-footer" id="md-mobile-footer" hidden>
+    <span class="md-mobile-footer-name" id="md-mobile-footer-name"></span>
+    <div class="md-mobile-footer-actions">
+      <button id="md-mobile-close-btn" class="md-edit-btn">Close</button>
+      <button id="md-mobile-edit-btn" class="md-edit-btn">Edit</button>
+      <button id="md-mobile-cancel-btn" class="md-edit-btn" hidden>Cancel</button>
+      <button id="md-mobile-save-btn" class="md-edit-btn md-save-btn" hidden>Save</button>
+    </div>
+  </div>
+
+  <!-- Persistent composer: a body-level flex item so it stays below the
+       scrollable content, including when a Markdown action bar is visible. -->
+  <footer class="dash-footer">
+    <div id="dash-panel" class="dash-panel" aria-live="polite">
+      <div class="dash-panel-body">
+        <div id="dash-response" class="dash-response" hidden></div>
+        <div class="dash-input-row">
+          <input id="dash-text" type="text" placeholder="Message Dash…" autocomplete="off">
+          <button id="dash-send" class="dash-send-btn" aria-label="Send">
+            <svg class="send-icon-send" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M22 2L11 13"></path>
+              <path d="M22 2l-7 20-4-9-9-4 20-7z"></path>
+            </svg>
+            <svg class="send-icon-cancel" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+            </svg>
+          </button>
+          <button id="dash-mic" class="dash-mic-btn" aria-label="Talk to Dash">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="9" y="3" width="6" height="12" rx="3"></rect>
+              <path d="M5 11a7 7 0 0 0 14 0"></path>
+              <line x1="12" y1="18" x2="12" y2="22"></line>
+              <line x1="8" y1="22" x2="16" y2="22"></line>
+            </svg>
+          </button>
+          <button id="dash-clear" class="dash-icon-btn dash-clear" aria-label="Clear" hidden>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 20H7L3 16a2 2 0 0 1 0-2.83l9.17-9.17a2 2 0 0 1 2.83 0l5.66 5.66a2 2 0 0 1 0 2.83L11.83 20"></path>
+              <line x1="18" y1="13" x2="9.5" y2="4.5"></line>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+  <script src="/web/app.js"></script>
+</body>
+</html>

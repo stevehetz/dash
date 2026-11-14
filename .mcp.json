@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "dash-dev": {
+      "command": "npm",
+      "args": ["run", "-s", "ai:mcp:dash-dev"]
+    }
+  }
+}
