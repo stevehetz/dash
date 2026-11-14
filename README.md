@@ -63,6 +63,30 @@ The dashboard is a dark-themed, mobile-friendly single-page app served directly 
 
 ---
 
+## Private Network: Reachable From Anywhere, Exposed Nowhere
+
+Dash never touches the public internet. My Mac mini, MacBook Pro and iPhone are joined in a private **Tailscale** network (a WireGuard mesh VPN), so I can reach Dash from anywhere — home Wi-Fi, cellular, a coffee shop — without opening router ports or running a public server.
+
+```
+          ┌──────────── Tailscale private network (WireGuard) ────────────┐
+          │                                                               │
+   iPhone │  Safari / home-screen PWA  ─┐                                 │
+          │  Siri Shortcut (voice)     ─┤                                 │
+          │                             ├─ HTTPS ─→  Mac mini             │
+MacBook   │  Browser (dashboard)       ─┤            Tailscale Serve      │
+   Pro    │  "Hey Dash" voice client   ─┘              → Dash :3001       │
+          │        ↑                                     │                │
+          │        └──── spoken reply sent back ─────────┘                │
+          └───────────────────────────────────────────────────────────────┘
+```
+
+- **Mac mini (the server):** Dash runs here 24/7. **Tailscale Serve** puts the dashboard and API behind an automatically provisioned HTTPS certificate on the Mac mini's private network name, and pm2 runs it as a managed process (`dash-tailscale`) so it survives reboots. Funnel (public sharing) is explicitly disabled.
+- **iPhone:** opens the dashboard as an installed web app with push notifications. A **Siri Shortcut** records a voice command, sends it over the private network, and speaks Dash's reply through the phone or AirPods.
+- **MacBook Pro:** uses the dashboard in a browser and runs its own **"Hey Dash" voice client**. It catches the wake word, transcribes on the laptop, sends the text to the Mac mini's agent, and the Mac mini calls back to the laptop to speak the reply.
+- **Defense in depth:** besides network-level access control, the Dash server trusts only requests that originate on the Mac mini itself (including the Tailscale Serve proxy). Every other caller must present a shared-secret token or is rejected with a 401.
+
+---
+
 ## What the Agent Can Do
 
 | Provider | Capabilities |
@@ -121,7 +145,7 @@ All of this remains in the project's git history.
 
 ## Tech Stack
 
-`Node.js` · `JavaScript` · `Python` · `LLM agents / tool use` · `OpenAI Codex` · `Vision models` · `MCP` · `Plaid API` · `Google APIs` · `Puppeteer` · `Telegram Bot API` · `Whisper` · `Picovoice Porcupine` · `Web Push / PWA` · `Tailscale` · `pm2` · `macOS`
+`Node.js` · `JavaScript` · `Python` · `LLM agents / tool use` · `OpenAI Codex` · `Vision models` · `MCP` · `Plaid API` · `Google APIs` · `Puppeteer` · `Telegram Bot API` · `Whisper` · `Picovoice Porcupine` · `Web Push / PWA` · `Tailscale / WireGuard` · `pm2` · `macOS`
 
 ---
 
