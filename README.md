@@ -55,6 +55,21 @@ The dashboard is a dark-themed, mobile-friendly single-page app served directly 
 
 ---
 
+## Automated Jobs
+
+Jobs are **scheduled prompts**. Each one is a plain-language instruction that the agent runs on its own at a set time, using the same tools it uses in conversation, and then delivers the result to me.
+
+- **Schedules:** recurring (daily, weekdays, weekends or chosen days), monthly (on a day of the month) or one-time (on a date)
+- **Created by asking:** "Every weekday at 7am, send me the weather" becomes a job through the agent's `add_job` tool, or I add it from the dashboard
+- **Managed live:** the Jobs page edits times, schedules and prompts inline, toggles jobs on and off, and streams status as jobs run
+- **Isolated runs:** scheduled jobs start without the recent chat history, so they stay on task
+
+Typical jobs include a pre-market briefing on the day's top market stories, a month-to-date income and expense summary, a daily weather report and weekend chore reminders.
+
+![Jobs page: scheduled agent prompts with time, schedule and an inline-editable prompt](docs/images/jobs.png)
+
+---
+
 ## Other Ways to Talk to Dash
 
 - **Telegram:** a chat interface locked to a single user ID. It accepts photos and documents, for example "print this" or "save this image."
