@@ -6,8 +6,10 @@
 - New bot capabilities are tool providers under `src/tools/<name>/skill.js` following the
   loader contract (see `architecture.md`) — copy a neighboring provider rather than inventing
   a new shape.
-- Don't commit unless asked. Never commit secrets: they live in gitignored symlinks into
-  `Dropbox/dropbox/secret/dash/` (see `AGENTS.md`). The repo is public.
+- Don't commit unless asked. Never commit secrets — the repo is public. Secrets are gitignored
+  files copied from `Dropbox/dropbox/secret/dash/` by `npm run secrets:pull` (runs automatically on
+  `pm2:boot`/`pm2:start`/`pm2:restart`). Edit them in the Dropbox copy; local edits are overwritten
+  on the next pull (see `AGENTS.md`).
 
 ## Verifying changes
 

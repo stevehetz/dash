@@ -13,7 +13,7 @@ config/streamfit.json
 *.crt
 *.keynotes
 data/
-# secrets (real files live in Dropbox/secret/dash, symlinked here)
+# secrets (master copies in Dropbox/dropbox/secret/dash, copied here by `npm run secrets:pull`)
 config/.env
 config/google-credentials.json
 config/google-token-personal.json.dead-20260611

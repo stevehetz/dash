@@ -17,9 +17,12 @@ GitHub: `git@github.com:stevehetz/dash.git`.
 - **`cli.js` and the integration tools do real things** — send email, create calendar
   events, read bank data, print, consume the subscription. Don't run side-effecting commands
   just to "test." (detail: `.agents/conventions.md`)
-- **Don't commit unless asked.** **Never commit secrets.** `config/.env`, `config/google-credentials.json`, `config/health-auto-export.json`
-  and `scripts/plaid-*.pem` are gitignored symlinks into `Dropbox/dropbox/secret/dash/` (same relative paths).
-  This repo is public. New secrets go in `config/.env`; add the key (blank) to `config/.env.example`.
+- **Don't commit unless asked.** **Never commit secrets — this repo is public.** `config/.env`,
+  `config/google-*.json`, `config/health-auto-export.json`, `scripts/plaid-*.pem` etc. are gitignored
+  real files copied from `Dropbox/dropbox/secret/dash/` (same relative paths) by `npm run secrets:pull`,
+  which runs automatically on `pm2:boot` / `pm2:start` / `pm2:restart`. **Edit secrets in the Dropbox
+  copy** — local edits are overwritten on the next pull. New secrets go in Dropbox `config/.env`; add
+  the key (blank) to `config/.env.example`.
 - **Don't recursively scan** big dirs: OneDrive `storage/`, `voice/venv/`, `voice/training_data/`,
   `logs/`, `node_modules/`, generated reports. Search the smallest relevant path first.
 - When Steve mentions an image or anything visual, **proactively check the screencaps folder

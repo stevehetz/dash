@@ -14,7 +14,7 @@ Real paths (the canonical index is `AGENTS.md`; read this when working in the co
   - `dash-mcp-server.js`, `json-schema-to-zod.js` — stdio MCP bridge. **Currently unused** (see below); kept for if/when `codex exec` supports MCP.
 - `src/tools/loader.js` — discovers tool providers at `src/tools/<name>/skill.js`. Each exports `{ name, tools, systemPrompt, requires?, createHandler, start? }`. Tool providers include apple, google-*, gmail, plaid, oura, weather, onedrive, dynamic-jobs, web, browser, printer, and others — run `node tools.js list` for the current set.
 - `web/` — dashapp (served by `bot.js`). `voice/` — Python voice listener (pm2 `dash-voice`).
-- `config/.env` — secrets + flags. A gitignored symlink into `Dropbox/dropbox/secret/dash/`; `config/.env.example` lists the keys.
+- `config/.env` — secrets + flags. Gitignored; copied from `Dropbox/dropbox/secret/dash/` by `npm run secrets:pull` (`scripts/pull-secrets.sh`, run automatically on `pm2:boot`/`pm2:start`/`pm2:restart`). Edit the Dropbox copy — local edits are overwritten on the next pull. Never commit it; the repo is public. `config/.env.example` lists the keys.
 - HTTP server (`bot.js`, port 3001, binds `0.0.0.0`) — loopback callers are trusted (local voice listener, Tailscale Serve);
   any other caller must send `X-Dash-Token: $DASH_HTTP_TOKEN` or gets a 401.
 

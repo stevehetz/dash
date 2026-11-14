@@ -32,8 +32,10 @@ macOS TCC grants mic access based on app bundle context. pm2 restarted via SSH d
 **What it runs:**
 ```bash
 cd ~/dev/dash && npm run pm2:boot
-# which expands to: pm2 kill && pm2 start ecosystem.config.cjs && pm2 save
+# which expands to: npm run secrets:pull && pm2 kill && pm2 start ecosystem.config.cjs && pm2 save
 ```
+
+`secrets:pull` (`scripts/pull-secrets.sh`) first copies the secrets from `~/Library/CloudStorage/Dropbox/dropbox/secret/dash/` into the repo as real files (chmod 600). If Dropbox isn't available it warns and keeps the existing local copies, so boot never fails on it.
 
 **Logs:**
 ```
