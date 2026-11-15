@@ -4,7 +4,7 @@
 
 Dash is an always-on assistant that I built and run at home. It pairs an LLM agent with a set of tool integrations: email, Apple Calendar and Reminders, files, banking, scheduled jobs, a headless browser, a printer and more. You can reach it from a web dashboard, from Telegram, or by voice ("Hey Dash").
 
-![Dash web dashboard](docs/images/dashboard.png)
+![Dash web dashboard](docs/images/dashboard-v2.png)
 
 ---
 
