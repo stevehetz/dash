@@ -41,8 +41,8 @@ function usage() {
 
 Examples:
   node tools.js list
-  node tools.js help list_directory
-  node tools.js call list_directory '{"path":"dashbook"}'`);
+  node tools.js help get_weather
+  node tools.js call get_weather '{"location":"Macedonia, OH"}'`);
 }
 
 if (!command || command === "help" && !name) {

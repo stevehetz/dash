@@ -4,20 +4,6 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Integrations that are intentionally retired from Dash. Keep their source
-// directories out of the loader so they are neither imported nor exposed.
-const DISABLED_TOOL_PROVIDERS = new Set([
-  "apple",
-  "email",
-  "gmail",
-  "google-calendar",
-  "google-drive",
-  "google-tasks",
-  "oura",
-  "weather",
-  "web",
-]);
-
 /**
  * Dynamically load all tools from the tools/ directory.
  *
@@ -33,7 +19,6 @@ export async function loadTools(deps = {}) {
 
   for (const dir of readdirSync(__dirname, { withFileTypes: true })) {
     if (!dir.isDirectory()) continue;
-    if (DISABLED_TOOL_PROVIDERS.has(dir.name)) continue;
 
     const mod = await import(join(__dirname, dir.name, "skill.js"));
     const toolModule = mod.default;

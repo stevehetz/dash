@@ -243,6 +243,10 @@ main > * {
 /* Tabs belonging to another page stay in the DOM — routing, swipe and the
    home-card sub-labels all read them — but never render. */
 .tab.tab-off-page { display: none; }
+/* Before app.js has run applyPage there's no body[data-page], and every page's
+   tabs would paint in the header at once — then snap away a moment later. Hold
+   the bar invisible (keeping its space, so the title doesn't shift) until then. */
+body:not([data-page]) .tabs-wrap { visibility: hidden; }
 
 /* ── Primary nav: left sidebar ──────────────────────────
    Fixed to the left edge. Below the sidebar breakpoint it's an off-canvas
@@ -1015,6 +1019,7 @@ body:not(.md-footer-visible) .notes-content-footer {
   min-width: 0;
 }
 
+#tab-api-usage .card + .card { margin-top: 1rem; }
 
 .card-header {
   display: flex;
@@ -1497,6 +1502,136 @@ select.job-field-edit { width: auto; }
   .system-status { margin-left: auto; }
 }
 
+/* Reminders */
+#reminders-count.refreshing::after {
+  content: " · refreshing…";
+  color: var(--accent);
+  font-style: italic;
+}
+.reminders-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.reminder {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.7rem 0.85rem;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.7rem;
+  align-items: start;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.reminder.completing {
+  opacity: 0.35;
+  transform: translateX(8px);
+}
+.reminder-check {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid var(--muted);
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  margin-top: 1px;
+  flex-shrink: 0;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.reminder-check:hover {
+  border-color: var(--text);
+}
+.reminder.completing .reminder-check {
+  background: var(--green);
+  border-color: var(--green);
+}
+.reminder-body { min-width: 0; }
+.reminder-name {
+  font-size: 0.93rem;
+  color: var(--text);
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+.reminder-due {
+  font-size: 0.74rem;
+  color: var(--muted);
+  margin-top: 0.2rem;
+  font-variant-numeric: tabular-nums;
+}
+.reminder-due.overdue { color: #f87171; }
+.reminder-notes {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 0.25rem;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* Messages tab (telegram history) */
+.messages-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.load-more-btn {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  padding: 0.4rem 0.8rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+  align-self: center;
+  margin-bottom: 0.25rem;
+}
+.load-more-btn:active { opacity: 0.7; }
+.msg {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.88rem;
+  line-height: 1.4;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.msg.from-user {
+  border-color: #2a5cb0;
+  background: #1a3a6a;
+  margin-left: 1.5rem;
+}
+.msg.from-dash {
+  border-color: #3a3d40;
+  background: #2b2e30;
+}
+.msg-meta {
+  font-size: 0.7rem;
+  color: var(--muted);
+  margin-bottom: 0.2rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.msg-text { white-space: normal; }
+.msg-text > :first-child { margin-top: 0; }
+.msg-text > :last-child { margin-bottom: 0; }
+.msg-text p { margin: 0.35em 0; white-space: pre-wrap; }
+.msg-text a {
+  color: #7ab8ff;
+  text-decoration: underline;
+}
+.msg-text a:hover { color: #a8d1ff; }
+.msg-image {
+  max-width: 100%;
+  max-height: 300px;
+  border-radius: 6px;
+  margin-bottom: 0.35em;
+  cursor: pointer;
+}
+
 /* ── Dash composer (inline) ─────────────────────────── */
 
 .dash-footer {
@@ -1740,6 +1875,939 @@ select.job-field-edit { width: auto; }
   .cal-time { width: auto; }
 }
 
+/* ── Sleep tab ───────────────────────────────────────── */
+.sleep-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.sleep-night {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.85rem 1rem 1rem;
+}
+
+.sleep-night-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.sleep-day-label {
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.sleep-day-date {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 0.1rem;
+}
+
+.sleep-score {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 64px;
+  height: 64px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  padding: 0 0.6rem;
+}
+
+.sleep-score-num {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.sleep-score-label {
+  font-size: 0.65rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 0.2rem;
+}
+
+.sleep-score.score-great { border-color: #1f3d2a; background: #0f1d14; }
+.sleep-score.score-great .sleep-score-num { color: var(--green); }
+.sleep-score.score-good  { border-color: #1f3a5c; background: #0e1a2b; }
+.sleep-score.score-good  .sleep-score-num { color: var(--accent); }
+.sleep-score.score-ok    { border-color: #3d2f1f; background: #1d160c; }
+.sleep-score.score-ok    .sleep-score-num { color: var(--amber); }
+.sleep-score.score-low   { border-color: #3d1f1f; background: #1d0f0f; }
+.sleep-score.score-low   .sleep-score-num { color: #f87171; }
+
+.sleep-night-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.sleep-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.sleep-stat {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.45rem 0.6rem;
+  min-width: 0;
+}
+
+.sleep-stat-label {
+  font-size: 0.65rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sleep-stat-val {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-top: 0.15rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sleep-readiness-val { color: var(--green); }
+
+.sleep-stages-bar {
+  display: flex;
+  width: 100%;
+  height: 10px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.sleep-stages-bar .stage { height: 100%; }
+.stage-deep  { background: #6366f1; }
+.stage-rem   { background: var(--purple); }
+.stage-light { background: #38bdf8; }
+.stage-awake { background: #eaaf85; }
+
+.sleep-stages-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.sleep-stages-legend .dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 0.35rem;
+  vertical-align: middle;
+}
+.dot-deep  { background: #6366f1; }
+.dot-rem   { background: var(--purple); }
+.dot-light { background: #38bdf8; }
+.dot-awake { background: #eaaf85; }
+
+@media (max-width: 600px) {
+  .sleep-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* ── Sleep charts ────────────────────────────────────────
+   The Sleep tab's Charts view — one panel per metric, plotted in CSS pixels
+   (the SVG is drawn at a measured width) so the axis labels read the same at
+   every viewport width. */
+.sleep-charts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+.sleep-charts-span {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.sleep-charts-hint { color: var(--muted-dim); }
+.sleep-chart {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.7rem 0.75rem 0.4rem;
+}
+.sleep-chart-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem 0.75rem;
+  margin-bottom: 0.25rem;
+}
+.sleep-chart-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.sleep-chart-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  flex: none;
+}
+.sleep-chart-units { font-size: 0.7rem; font-weight: 400; color: var(--muted); }
+.sleep-chart-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem 0.7rem;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+.sleep-chart-stats b { color: var(--text-2); font-weight: 600; }
+.sleep-chart-svg { display: block; max-width: 100%; }
+.sleep-chart-svg .sc-grid { stroke: var(--border); stroke-width: 1; }
+.sleep-chart-svg .sc-axis-label { font-size: 9.5px; fill: var(--muted); }
+/* Each reading gets an invisible hit band; the crosshair and its point light
+   up only under the cursor, which keeps months of nights from reading as a
+   wall of dots. */
+.sleep-chart-svg .sc-band .sc-cursor {
+  stroke: var(--grid-hover);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+  opacity: 0;
+}
+.sleep-chart-svg .sc-band .sc-hit { opacity: 0; }
+.sleep-chart-svg .sc-band:hover .sc-cursor,
+.sleep-chart-svg .sc-band:hover .sc-hit { opacity: 1; }
+
+/* The Library helper's proposed file — sized by JS to fit its content, and
+   read as a file rather than as prose, so it takes the editor's face. */
+.doc-proposal textarea {
+  width: 100%;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.6rem;
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  resize: none;
+  overflow: hidden;
+}
+
+/* ── Timeline (day planner) ─────────────────────────────── */
+#timeline-card > .card-header { flex-wrap: wrap; }
+
+.timeline-date-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.timeline-date-nav input[type="date"] {
+  background: var(--card-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.3rem 0.45rem;
+  font-family: inherit;
+  font-size: 0.82rem;
+  line-height: 1.2;
+  color-scheme: dark;
+  /* iOS gives date inputs their own control metrics — taller than a .btn and
+     immune to font-size until the native appearance is dropped. */
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* Safari renders the value in a shadow element that ignores the input's own
+   font-size and carries a default margin, so it has to be sized directly. */
+.timeline-date-nav input[type="date"]::-webkit-date-and-time-value {
+  font-size: 0.82rem;
+  line-height: 1.2;
+  margin: 0;
+  text-align: left;
+}
+
+/* Sits between the visualization and the block editor, not in the header. */
+.timeline-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 0.85rem;
+}
+
+#timeline-cancel-btn {
+  color: #f87171;
+  border-color: rgba(248, 113, 113, 0.4);
+}
+#timeline-cancel-btn:hover:not(:disabled) {
+  border-color: #f87171;
+  background: #1d0f0f;
+}
+
+.timeline-allday {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.65rem;
+  margin-bottom: 0.85rem;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+/* `display: flex` above outranks the UA stylesheet's `[hidden] { display: none }`,
+   so the panel needs to opt out explicitly or it shows even when empty. */
+.timeline-allday[hidden] { display: none; }
+
+.timeline-allday-label {
+  font-size: 0.65rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-right: 0.15rem;
+}
+
+.timeline-allday-pill {
+  font-size: 0.78rem;
+  line-height: 1;
+  padding: 0.32rem 0.6rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  color: var(--text);
+}
+
+.timeline-cal-badge {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  align-self: center;
+  cursor: help;
+  flex-shrink: 0;
+}
+
+.timeline-block.from-calendar {
+  border-left: 2px solid var(--accent);
+}
+
+/* Read-only calendar rows: muted, but keep the text legible — the browser's
+   default disabled styling washes it out to near-invisible. */
+.timeline-block.from-calendar .timeline-input:disabled {
+  color: var(--text);
+  opacity: 0.72;
+  background: transparent;
+  border-color: transparent;
+  cursor: default;
+}
+.timeline-block.from-calendar .timeline-delete:disabled {
+  opacity: 0.25;
+  cursor: not-allowed;
+}
+.timeline-block.from-calendar:hover .timeline-delete:disabled { opacity: 0.25; }
+
+.timeline-copy-panel {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.timeline-copy-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.timeline-copy-label input[type="date"] {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.3rem 0.45rem;
+  font-family: inherit;
+  font-size: 0.82rem;
+  color-scheme: dark;
+}
+
+.timeline-copy-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.timeline-copy-msg { font-size: 0.8rem; color: var(--muted); }
+.timeline-copy-msg.err { color: #e83e3e; }
+.timeline-copy-msg.ok { color: #06a557; }
+
+.timeline-viz {
+  padding: 0.85rem 0.6rem 0.6rem;
+  margin-bottom: 0.75rem;
+}
+
+.timeline-viz-above,
+.timeline-viz-below {
+  position: relative;
+  height: 3.75rem;
+}
+
+.timeline-viz-track {
+  position: relative;
+  height: 12px;
+  border-radius: 6px;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.timeline-viz-segment {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 3px;
+  opacity: 0.82;
+  transition: opacity 0.12s;
+}
+.timeline-viz-segment:hover { opacity: 1; }
+
+/* Draggable = manually entered. Calendar blocks keep the default cursor. */
+.timeline-viz-segment.draggable {
+  cursor: grab;
+  touch-action: none;
+}
+.timeline-viz.dragging .timeline-viz-segment.draggable { cursor: grabbing; }
+.timeline-viz.dragging { user-select: none; }
+
+.timeline-viz-handle {
+  position: absolute;
+  touch-action: none;
+}
+
+/* Horizontal: grab the left/right ends. */
+.timeline-viz-handle {
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  max-width: 35%;
+  cursor: ew-resize;
+}
+.timeline-viz-handle[data-edge="start"] { left: 0; }
+.timeline-viz-handle[data-edge="end"] { right: 0; }
+
+/* Vertical: the axis flips, so the handles sit on the top/bottom edges. */
+.timeline-viz[data-orientation="vertical"] .timeline-viz-handle {
+  left: 0;
+  right: 0;
+  top: auto;
+  bottom: auto;
+  width: auto;
+  max-width: none;
+  height: 7px;
+  max-height: 35%;
+  cursor: ns-resize;
+}
+.timeline-viz[data-orientation="vertical"] .timeline-viz-handle[data-edge="start"] { top: 0; }
+.timeline-viz[data-orientation="vertical"] .timeline-viz-handle[data-edge="end"] { bottom: 0; }
+
+.timeline-viz-segment.draggable:hover .timeline-viz-handle {
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.timeline-viz-tickmarks {
+  height: 5px;
+  margin-top: 0.3rem;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--border) 0,
+    var(--border) 1px,
+    transparent 1px,
+    transparent calc(100% / 16)
+  );
+}
+
+.timeline-viz-ticks {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.2rem;
+  font-size: 0.65rem;
+  color: var(--muted);
+}
+
+.timeline-viz-label {
+  position: absolute;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 120px;
+  pointer-events: none;
+}
+.timeline-viz-above .timeline-viz-label { bottom: 0; }
+.timeline-viz-below .timeline-viz-label { top: 0; }
+
+.timeline-viz-label-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.timeline-viz-label-box {
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text);
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.1rem 0.4rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+  text-align: center;
+}
+
+.timeline-viz-label-time {
+  font-size: 0.6rem;
+  color: var(--muted);
+  margin-top: 0.15rem;
+  white-space: nowrap;
+}
+
+.timeline-viz-connector {
+  width: 1px;
+  height: 0.5rem;
+}
+
+.timeline-viz-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Vertical orientation — mobile default, also reachable via the toggle on any
+   screen size. Reuses the same containers; CSS just re-lays them as a row. */
+.timeline-viz[data-orientation="vertical"] {
+  display: flex;
+  align-items: stretch;
+  gap: 0.6rem;
+  padding: 0.5rem 0;
+}
+
+.timeline-viz[data-orientation="vertical"] .timeline-viz-ticks {
+  order: 1;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  height: 102rem;
+  margin-top: 0;
+  text-align: right;
+}
+
+.timeline-viz[data-orientation="vertical"] .timeline-viz-tickmarks {
+  order: 2;
+  width: 5px;
+  height: 102rem;
+  margin-top: 0;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--border) 0,
+    var(--border) 1px,
+    transparent 1px,
+    transparent calc(100% / 16)
+  );
+}
+
+.timeline-viz[data-orientation="vertical"] .timeline-viz-track {
+  order: 3;
+  width: 10px;
+  height: 102rem;
+  flex-shrink: 0;
+}
+
+.timeline-viz[data-orientation="vertical"] .timeline-viz-segment {
+  left: 0;
+  right: 0;
+  top: auto;
+  bottom: auto;
+  min-width: 0;
+  min-height: 3px;
+}
+
+.timeline-viz[data-orientation="vertical"] .timeline-viz-above {
+  order: 4;
+  flex: 1;
+  height: 102rem;
+  min-width: 0;
+}
+
+.timeline-viz[data-orientation="vertical"] .timeline-viz-below {
+  display: none;
+}
+
+.timeline-viz[data-orientation="vertical"] .timeline-viz-label {
+  left: 0;
+  bottom: auto;
+  transform: translateY(-50%);
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+  max-width: none;
+}
+
+.timeline-viz[data-orientation="vertical"] .timeline-viz-connector {
+  width: 0.5rem;
+  height: 1px;
+}
+
+.timeline-viz[data-orientation="vertical"] .timeline-viz-label-text {
+  align-items: flex-start;
+}
+
+.timeline-viz[data-orientation="vertical"] .timeline-viz-label-box {
+  max-width: 55vw;
+  text-align: left;
+}
+
+.timeline-viz-anchor-dot {
+  position: absolute;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.timeline-viz-riser {
+  position: absolute;
+  left: 0;
+  width: 1px;
+  opacity: 0.6;
+}
+
+@media (max-width: 600px) {
+  .timeline-viz-label-box,
+  .timeline-viz-label { max-width: 72px; }
+  .timeline-viz-ticks { font-size: 0.6rem; }
+}
+
+.timeline-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.timeline-block {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.55rem 0.65rem;
+}
+
+.timeline-block-time {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+.timeline-block-time .timeline-input {
+  width: 7.7rem;
+  flex-shrink: 0;
+}
+
+.timeline-time-sep {
+  color: var(--muted);
+}
+
+.timeline-duration {
+  color: var(--muted);
+  font-size: 0.72rem;
+  white-space: nowrap;
+  width: 3.4rem;
+  flex-shrink: 0;
+  margin-left: 0.15rem;
+}
+
+.timeline-input {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.35rem 0.5rem;
+  font-family: inherit;
+  font-size: 0.85rem;
+  color-scheme: dark;
+}
+
+.timeline-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.timeline-input.invalid {
+  border-color: #f87171;
+}
+
+.timeline-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.timeline-delete {
+  flex-shrink: 0;
+  width: 1.6rem;
+  height: 1.6rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.timeline-delete:hover {
+  color: #f87171;
+  border-color: #f87171;
+}
+
+/* Mobile: the desktop time controls are far wider than their content, which
+   pushed the cal badge and delete onto a line of their own — three stacked rows
+   per block. Shrink the time controls so the whole header fits one row and the
+   title gets the second. */
+@media (max-width: 600px) {
+  .timeline-list { gap: 0.4rem; }
+
+  .timeline-block {
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    padding: 0.4rem 0.5rem;
+  }
+
+  /* Auto margin only eats free space, so on a phone too narrow to fit the whole
+     header the badge/delete still wrap instead of overflowing. */
+  .timeline-block-time {
+    gap: 0.25rem;
+    margin-right: auto;
+  }
+
+  /* Font size is pinned to 0.85rem by the iOS zoom-prevention block above, so
+     the width has to hold "11:00 AM" at that size — 5.2rem, with the picker
+     icon dropped to buy back the room. */
+  .timeline-block-time .timeline-input {
+    width: 5.2rem;
+    padding: 0.25rem 0.3rem;
+    text-align: center;
+    /* Same trap as the date nav above: iOS gives time inputs their own control
+       metrics that ignore font-size until the native appearance is dropped. */
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
+  /* Tapping the field opens the native picker anyway; the icon is dead weight. */
+  .timeline-block-time .timeline-input::-webkit-calendar-picker-indicator {
+    display: none;
+  }
+
+  .timeline-block-time .timeline-input::-webkit-date-and-time-value {
+    font-size: 0.85rem;
+    line-height: 1.2;
+    margin: 0;
+    text-align: center;
+  }
+
+  .timeline-duration {
+    width: auto;
+    min-width: 2.1rem;
+    margin-left: 0;
+    font-size: 0.68rem;
+  }
+
+  .timeline-cal-badge { order: 1; }
+
+  .timeline-delete {
+    order: 2;
+    width: 1.4rem;
+    height: 1.4rem;
+    font-size: 0.9rem;
+  }
+
+  /* Font size stays at the mobile 16px minimum — shrinking it would make iOS
+     zoom the page on focus. Only the padding tightens. */
+  .timeline-title {
+    order: 3;
+    flex-basis: 100%;
+    padding: 0.3rem 0.4rem;
+  }
+}
+
+/* ── Review (day recap) ────────────────────────────────── */
+/* The date nav wraps under the title on narrow screens, so this header needs
+   more room beneath it than a plain card title does. */
+#review-card > .card-header {
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+
+.review-section {
+  margin-top: 1.25rem;
+}
+/* The first heading sits right under the date nav — no extra gap needed. Any
+   section can be hidden on a day with nothing in it, so "first" is whichever
+   one no visible section precedes, not a fixed one. */
+.review-section-first { margin-top: 0.35rem; }
+.review-section:not([hidden]) { margin-top: 0.35rem; }
+.review-section:not([hidden]) ~ .review-section:not([hidden]) { margin-top: 1.25rem; }
+
+.review-section-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--border);
+  margin: 0 0 0.6rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.review-section-title .count { margin-left: auto; }
+
+/* A control that belongs to one section rides at the right end of its heading,
+   scaled to the heading and opting out of its uppercase treatment. */
+.review-section-title .btn-inline {
+  margin-left: auto;
+  font-size: 0.7rem;
+  padding: 0.15rem 0.45rem;
+  text-transform: none;
+  letter-spacing: 0;
+  /* The heading aligns on baselines; this control centers on its own contents. */
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+}
+
+/* Review shows the chart, never edits it. */
+#review-viz .timeline-viz-segment { cursor: default; }
+
+.review-weather {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.65rem 0.9rem;
+  font-size: 0.85rem;
+}
+
+/* One shape for every item in the row: same icon box, same type size. */
+.review-weather-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+  color: var(--text);
+}
+.review-weather-stat svg { width: 17px; height: 17px; flex: none; color: var(--muted); }
+
+/* The condition leads the row, so its glyph runs larger than the stat icons. */
+.review-weather-stat.cond { text-transform: capitalize; gap: 0.45rem; }
+.review-weather-stat.cond svg { width: 26px; height: 26px; }
+.review-weather-stat.hi svg { color: var(--amber); }
+.review-weather-stat.lo svg { color: var(--accent); }
+.review-weather-stat.humidity svg { color: #5ed3c4; }
+.review-weather-stat.wind svg { color: #9aa7bd; }
+
+/* Each condition gets its own tint so the day reads at a glance. */
+.review-weather-stat[data-glyph="sun"] svg,
+.review-weather-stat[data-glyph="partly"] svg { color: var(--amber); }
+.review-weather-stat[data-glyph="cloud"] svg { color: #9aa7bd; }
+.review-weather-stat[data-glyph="rain"] svg { color: var(--accent); }
+.review-weather-stat[data-glyph="snow"] svg { color: #93c5fd; }
+.review-weather-stat[data-glyph="storm"] svg { color: var(--purple); }
+.review-weather-stat[data-glyph="fog"] svg { color: var(--muted); }
+
+.review-weather-alert {
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--amber);
+}
+
+.review-expenses {
+  display: flex;
+  flex-direction: column;
+}
+
+.review-expense-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.35rem 0;
+  font-size: 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+.review-expense-row:last-child { border-bottom: none; }
+
+.review-expense-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.review-expense-cat {
+  font-size: 0.68rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+.review-expense-amt {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
 /* ── Finances ──────────────────────────────────────────── */
 .finances-list {
   display: flex;
@@ -1845,6 +2913,156 @@ select.job-field-edit { width: auto; }
   .fin-stat { padding: 0.35rem 0.45rem; }
   .fin-stat-val { font-size: 0.85rem; }
   .fin-line { font-size: 0.8rem; }
+}
+
+/* ── API Usage ──────────────────────────────────────── */
+.api-usage-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.api-summary {
+  text-align: center;
+  padding: 1rem 0 0.5rem;
+}
+.api-summary-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.25rem;
+}
+.api-summary-total {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.api-section-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Daily bar chart */
+.api-chart {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-start;
+  gap: 2px;
+  height: 180px;
+  padding-top: 0.5rem;
+  overflow-x: auto;
+}
+.api-bar-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1 1 0;
+  min-width: 24px;
+  max-width: 40px;
+  height: 100%;
+}
+.api-bar-val {
+  font-size: 0.55rem;
+  color: var(--muted);
+  margin-bottom: 4px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.api-bar-track {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  min-height: 0;
+}
+.api-bar-fill {
+  width: 100%;
+  background: var(--accent);
+  border-radius: 3px 3px 0 0;
+  min-height: 2px;
+  transition: height 0.3s ease;
+}
+.api-bar-label {
+  font-size: 0.65rem;
+  color: var(--text);
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.api-bar-day {
+  font-size: 0.55rem;
+  color: var(--muted);
+}
+
+/* Monthly history horizontal bars */
+.api-history {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.api-history-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.25rem 0.5rem;
+  margin: 0 -0.5rem;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.api-history-row.clickable {
+  cursor: pointer;
+}
+.api-history-row.clickable:hover {
+  background: var(--card);
+}
+.api-history-row.selected {
+  background: var(--card);
+  border-color: var(--accent-soft);
+}
+.api-history-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.api-history-label {
+  font-size: 0.8rem;
+  color: var(--text);
+  min-width: 70px;
+  flex-shrink: 0;
+}
+.api-history-bar-wrap {
+  flex: 1;
+  height: 22px;
+  background: var(--card);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.api-history-bar {
+  height: 100%;
+  background: var(--accent-soft);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+.api-history-val {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+  min-width: 60px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 600px) {
+  .api-chart { height: 140px; }
+  .api-bar-val { font-size: 0.5rem; }
+  .api-summary-total { font-size: 1.5rem; }
 }
 
 /* ── Buttons ───────────────────────────────────────── */
@@ -3207,3 +4425,424 @@ body.is-row-dragging .ntable-drag-handle { cursor: grabbing; }
 .log-group-cal { font-weight: 600; white-space: nowrap; }
 .group-builder[hidden],
 .log-group-list[hidden] { display: none; }
+
+/* ── Email ─────────────────────────────────────────────
+   List beside reader on desktop, list *or* reader on a phone: the panel gets
+   .email-reading when a message is open, which is what swaps them below the
+   split breakpoint. Both columns scroll on their own so the header row and the
+   inbox stay put while a long message runs past.
+*/
+/* Out of the 1100px column the rest of the app sits in: two panes side by side
+   want the room, and a message renders at whatever width its sender designed
+   it for regardless. Same opt-out the food logs take. */
+.email-panel { max-width: none; }
+
+.email-bar {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+.email-account {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.email-address {
+  font-size: 0.75rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.email-filter {
+  margin-left: auto;
+  flex: 0 1 200px;
+  min-width: 110px;
+  font-family: inherit;
+  font-size: 0.82rem;
+  padding: 0.35rem 0.6rem;
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.email-filter:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+/* The clear "x" WebKit puts in a search field, which is otherwise invisible
+   against the dark surface. */
+.email-filter::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  height: 0.8em;
+  width: 0.8em;
+  background: var(--muted);
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 6l12 12M18 6L6 18' stroke='black' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E") center/contain no-repeat;
+  cursor: pointer;
+}
+
+.email-layout {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: 1fr;
+}
+.email-list {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 0.4rem;
+  min-width: 0;
+}
+.email-reader-col { min-width: 0; }
+.email-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40vh;
+  color: var(--border);
+}
+.email-placeholder[hidden] { display: none; }
+
+/* The desktop split lives at the end of this file — see the note there. It has
+   to come after the base .email-reader / .email-msg-frame rules, which set a
+   height it needs to undo. */
+/* Below the split, one column at a time: the list until you open something,
+   the reader after. The reader's own back button puts the list back. */
+@media (max-width: 899px) {
+  .email-panel.email-reading .email-list,
+  .email-panel:not(.email-reading) .email-reader-col { display: none; }
+  .email-placeholder { display: none; }
+}
+
+/* A row: sender and time on the first line, subject then snippet under it.
+   Unread is carried by weight and a dot, not colour alone. */
+.email-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--text);
+  font-family: inherit;
+  padding: 0.5rem 0.6rem;
+  cursor: pointer;
+  min-width: 0;
+}
+.email-item + .email-item { margin-top: 1px; }
+.email-item:hover { background: var(--card-2); }
+.email-item.active {
+  background: var(--accent-soft);
+  border-color: var(--accent-deep);
+}
+.email-item-top {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.email-item-from {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.88rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.email-item-date {
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+/* display:block on both — they're spans inside a button, and ellipsis needs a
+   block box to clip against. */
+.email-item-subject {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.email-item-snippet {
+  display: block;
+  font-size: 0.76rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.email-item.unread .email-item-from,
+.email-item.unread .email-item-subject { font-weight: 650; }
+.email-item.unread .email-item-subject { color: var(--text); }
+/* The unread marker itself, in the gutter the read rows leave empty. */
+.email-item-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  align-self: center;
+}
+.email-item-dot.read { background: transparent; }
+
+.email-reader { min-height: 50vh; }
+.email-reader[hidden] { display: none; }
+.email-back {
+  display: none;
+  font-family: inherit;
+  font-size: 0.82rem;
+  background: none;
+  border: none;
+  color: var(--accent);
+  padding: 0 0 0.5rem;
+  cursor: pointer;
+}
+@media (max-width: 899px) { .email-back { display: block; } }
+.email-msg-subject {
+  margin: 0 0 0.45rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+.email-msg-meta {
+  font-size: 0.78rem;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  overflow-wrap: anywhere;
+}
+.email-msg-meta b {
+  font-weight: 600;
+  color: var(--text-2);
+}
+.email-msg-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 0.7rem 0;
+  padding-bottom: 0.7rem;
+  border-bottom: 1px solid var(--border);
+}
+.email-attachments {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.email-attachment {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.15rem 0.45rem;
+  overflow-wrap: anywhere;
+}
+/* HTML mail renders in a sandboxed frame — no scripts, remote images blocked
+   until asked for. White inside, because that is the background every one of
+   these was designed against; forcing the app's dark surface on them makes
+   half of them unreadable. */
+.email-msg-frame {
+  width: 100%;
+  height: calc(var(--main-h, 100dvh) - 15rem);
+  min-height: 320px;
+  border: 0;
+  border-radius: 8px;
+  background: #fff;
+  color-scheme: light;
+}
+/* Text-only mail needs no frame — it's already ours to style. */
+.email-msg-text {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-2);
+}
+
+/* Compose — one form, built by createEmailTab into the placeholder in each
+   panel. Sits above the list/reader split so it's the same on both. */
+.email-compose {
+  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.email-compose[hidden] { display: none; }
+.email-compose-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.email-compose-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.email-compose-from {
+  font-size: 0.75rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* No auto margin here — .email-ai-btn ahead of it carries the one that pushes
+   this pair right. Two of them would split the gap and strand the × mid-row. */
+.email-compose-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 0 0.25rem;
+  cursor: pointer;
+}
+.email-compose-close:hover { color: var(--text); }
+.email-compose-input,
+.email-compose-body {
+  width: 100%;
+  font-family: inherit;
+  font-size: 0.88rem;
+  padding: 0.45rem 0.6rem;
+  background: var(--card-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.email-compose-body {
+  resize: vertical;
+  min-height: 9rem;
+  line-height: 1.5;
+}
+.email-compose-input:focus,
+.email-compose-body:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.email-compose-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.email-compose-status {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.email-compose-sent {
+  font-size: 0.88rem;
+  color: var(--green);
+}
+
+/* Email, desktop: the page is exactly one screen and nothing outside it
+   scrolls — the inbox scrolls, the message scrolls, the window doesn't.
+   That means pinning the panel to the height <main> actually gives it.
+   --main-h is main's clientHeight, which includes its own 1rem/4rem padding,
+   so the panel takes that back off.
+
+   Every box from the panel down to the iframe needs min-height:0: a flex child
+   defaults to refusing to shrink below its content, and one that won't shrink
+   pushes the overflow straight back out to the window — which is the outer
+   scrollbar this replaced.
+
+   Last in the file on purpose. Media queries add no specificity, so these have
+   to come after the base .email-reader (min-height:50vh) and .email-msg-frame
+   (a fixed height) rules they override. */
+@media (min-width: 900px) {
+  .email-panel {
+    display: flex;
+    flex-direction: column;
+    height: calc(var(--main-h, 100dvh) - 5rem);
+  }
+  .email-bar,
+  .email-compose { flex: 0 0 auto; }
+  .email-layout {
+    grid-template-columns: minmax(280px, 380px) 1fr;
+    align-items: stretch;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  .email-list {
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .email-reader-col {
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .email-placeholder {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  /* The card is the frame; the body inside it is the only part that moves. */
+  .email-reader {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .email-reader > .email-back,
+  .email-reader > .email-msg-subject,
+  .email-reader > .email-msg-meta,
+  .email-reader > .email-msg-tools { flex: 0 0 auto; }
+  .email-msg-frame {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+  }
+  .email-msg-text {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+  }
+}
+
+/* Ask Dash, inside the composer. Sits between the head and the fields it
+   writes into, so the instruction and its result read top to bottom. */
+.email-ai {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.email-ai[hidden] { display: none; }
+.email-ai-text {
+  width: 100%;
+  font-family: inherit;
+  font-size: 0.85rem;
+  padding: 0.4rem 0.55rem;
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  resize: vertical;
+}
+.email-ai-text:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.email-ai-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.email-ai-status {
+  font-size: 0.76rem;
+  color: var(--muted);
+  min-width: 0;
+}
+.email-ai-btn { margin-left: auto; }

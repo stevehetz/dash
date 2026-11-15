@@ -11,8 +11,12 @@ import { llmOneShot } from "./src/llm/one-shot.js";
 
 import { createServices } from "./src/setup.js";
 import { Agent } from "./src/agent.js";
+import { listReminders, completeReminder } from "./src/tools/apple/apple-notes-reminders.js";
 import { lookupFood, nutritionAssist, logAssist, appendFoodRow, replaceFoodRow, buildFoodRecord, readNutritionTable, writeTempImage, removeTempImage, readGroupsWithTotals, saveGroup, deleteGroup, deleteFoodRow, readLogsWithTotals, saveLog, deleteLog, readTargetsConfig, writeTargetsItem, rescaleFoodReferences, renameFoodReferences, countFoodReferences } from "./src/nutrition.js";
 import { libraryAssist } from "./src/docs.js";
+import { emailAssist } from "./src/email.js";
+import { getCachedEvents, getCacheTimestamp, refreshCalendarCache } from "./src/tools/jobs/calendar-cache.js";
+import { syncCalendarToPlanner, syncCalendarWindow } from "./src/tools/jobs/calendar-planner-sync.js";
 import { readConfig as readJobsConfig, writeConfig as writeJobsConfig } from "./src/tools/dynamic-jobs/skill.js";
 
 // ── Validate config ──────────────────────────────────────
@@ -283,6 +287,7 @@ const services = await createServices();
 console.log("🤖 Bot starting...");
 console.log(`   OneDrive path: ${process.env.ONEDRIVE_PATH}`);
 console.log(`   LLM model: ${process.env.CODEX_MODEL || CLAUDE_MODEL}`);
+console.log(`   Google APIs: ${process.env.GOOGLE_CREDENTIALS_PATH ? "enabled" : "disabled (no GOOGLE_CREDENTIALS_PATH)"}`);
 console.log(`   Allowed user: ${ALLOWED_USER_ID}`);
 
 const agent = new Agent(services.fileManager, services, CLAUDE_MODEL);
@@ -358,12 +363,79 @@ const SYSTEM_JOBS_PATHS = [
 const NOTEBOOK_DIR = `${process.env.ONEDRIVE_PATH}/dashbook`;
 const DASH_DIR = `${process.env.ONEDRIVE_PATH}/dashbook/dash`;
 const PNC_REPORTS_DIR = `${process.env.ONEDRIVE_PATH}/dashbook/data/reports/pnc`;
+const TIMELINE_DIR = `${process.env.ONEDRIVE_PATH}/dashbook/data/timeline`;
+const TASKS_DIR = `${process.env.ONEDRIVE_PATH}/dashbook/data/tasks`;
 // Nutrient reference table, exported from the "raw" tab of nutrition.xlsm.
 const NUTRITION_FILE = `${process.env.ONEDRIVE_PATH}/dashbook/nutrition/raw.csv`;
 // A food lookup takes several photos of the same item (package front, nutrition
 // panel, ingredients). Capped so one request can't blow past the body limit.
 const MAX_LOOKUP_PHOTOS = 6;
 // A missing log file just means nothing has been logged yet.
+
+// Minimal CSV field splitter: handles the quoted fields our exports produce.
+function splitCsvLine(line) {
+  const fields = [];
+  let field = "", inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQuotes) {
+      if (c === '"' && line[i + 1] === '"') { field += '"'; i++; }
+      else if (c === '"') inQuotes = false;
+      else field += c;
+    } else if (c === '"') inQuotes = true;
+    else if (c === ",") { fields.push(field); field = ""; }
+    else field += c;
+  }
+  fields.push(field);
+  return fields;
+}
+
+const REPORTS_DIR = `${process.env.ONEDRIVE_PATH}/dashbook/data/reports`;
+let apiUsageCache = null, apiUsageCacheTime = 0;
+
+// ── Email (Gmail), for the dashapp's Email page ─────────
+// Read-only on purpose: the page shows the two inboxes, it doesn't send, file
+// or delete. Those stay with the agent's gmail_* tools, which confirm first.
+// Keys are what the URL carries; the labels are what the tabs say.
+const EMAIL_ACCOUNTS = {
+  personal: { label: "Personal", service: "personalGmailManager" },
+  professional: { label: "Professional", service: "gmailManager" },
+  // The bot's own address. Mail here is usually already read: the inbox-poll
+  // job forwards anything new to Telegram and marks it read on the way out
+  // (src/tools/jobs/inbox-poll.js), so this tab is mostly the record of what
+  // Dash has been sent rather than a queue to work through.
+  dashbot: { label: "Dash", service: "dashbotGmailManager" },
+};
+// Deep enough to scroll back through a couple of weeks without paging.
+const EMAIL_LIST_MAX = 200;
+// A fetched inbox is good for two minutes. Long enough that switching tabs and
+// coming back is instant, short enough that the page isn't visibly behind.
+const EMAIL_LIST_TTL = 120_000;
+const emailListCache = new Map();    // account -> { at, payload }
+const emailListInflight = new Map(); // account -> Promise, so two tabs asking
+                                     // at once cost one fetch, not two
+const emailBodyCache = new Map();    // `${account}:${id}` -> parsed message
+const EMAIL_BODY_CACHE_MAX = 120;
+
+
+function emailManagerFor(account) {
+  const entry = EMAIL_ACCOUNTS[account];
+  return entry ? services[entry.service] : null;
+}
+
+async function fetchEmailList(account, manager) {
+  const [address, messages] = await Promise.all([
+    manager.getEmailAddress().catch(() => null),
+    manager.listInbox({ maxResults: EMAIL_LIST_MAX }),
+  ]);
+  return {
+    account,
+    label: EMAIL_ACCOUNTS[account].label,
+    address,
+    fetchedAt: Date.now(),
+    messages,
+  };
+}
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -399,6 +471,13 @@ const LIBRARY_VIEWABLE_IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".
 const jobsClients = new Set();
 // SSE clients subscribed to library (dashbook file tree + contents) updates
 const libraryClients = new Set();
+// SSE clients subscribed to reminders updates
+const remindersClients = new Set();
+// SSE clients subscribed to message-history updates
+const messagesClients = new Set();
+// SSE clients subscribed to chat updates (dashapp-only chat)
+const chatClients = new Set();
+
 // ── Message history ─────────────────────────────────────
 // Persisted to OneDrive so history survives restarts and syncs across devices.
 const MESSAGES_MAX = 500;
@@ -439,6 +518,14 @@ function persistMessages() {
   }, 500);
 }
 
+function broadcastMessages() {
+  const msgs = messagesHistory.slice(-MESSAGES_DEFAULT_LIMIT);
+  const payload = `event: update\ndata: ${JSON.stringify({ messages: msgs, total: messagesHistory.length })}\n\n`;
+  for (const res of messagesClients) {
+    try { res.write(payload); } catch { /* ignore */ }
+  }
+}
+
 function recordMessage(from, text, image) {
   if (!text && !image) return;
   // Dedupe: if the last entry is the same source + same text within 2s, skip.
@@ -451,6 +538,7 @@ function recordMessage(from, text, image) {
   if (image) entry.image = image;
   messagesHistory.push(entry);
   while (messagesHistory.length > MESSAGES_MAX) messagesHistory.shift();
+  broadcastMessages();
   persistMessages();
 }
 
@@ -523,6 +611,14 @@ function persistChat() {
   }, 500);
 }
 
+function broadcastChat() {
+  const msgs = chatHistory.slice(-CHAT_DEFAULT_LIMIT);
+  const payload = `event: update\ndata: ${JSON.stringify({ messages: msgs, total: chatHistory.length })}\n\n`;
+  for (const res of chatClients) {
+    try { res.write(payload); } catch { /* ignore */ }
+  }
+}
+
 function recordChat(from, text) {
   if (!text) return;
   const last = chatHistory[chatHistory.length - 1];
@@ -530,6 +626,7 @@ function recordChat(from, text) {
   if (last && last.from === from && last.text === text && now - last.ts < 2000) return;
   chatHistory.push({ from, text, ts: now });
   while (chatHistory.length > CHAT_MAX) chatHistory.shift();
+  broadcastChat();
   persistChat();
 }
 
@@ -600,6 +697,33 @@ if (TELEGRAM_ENABLED) {
   };
 }
 
+// ── Reminders cache + background refresh ────────────────
+// JXA calls to Reminders.app are slow (5–60s). We cache server-side
+// and refresh on a timer; clients always read the cache instantly.
+let remindersCache = { reminders: [], lastFetched: 0, ready: false };
+let remindersRefreshing = false;
+
+function broadcastReminders() {
+  const payload = `event: update\ndata: ${JSON.stringify({ reminders: remindersCache.reminders, ready: remindersCache.ready })}\n\n`;
+  for (const res of remindersClients) {
+    try { res.write(payload); } catch { /* ignore */ }
+  }
+}
+
+async function refreshReminders() {
+  if (remindersRefreshing) return;
+  remindersRefreshing = true;
+  try {
+    const reminders = await listReminders();
+    remindersCache = { reminders, lastFetched: Date.now(), ready: true };
+    broadcastReminders();
+  } catch (err) {
+    console.error("Reminders refresh failed:", err.message);
+  } finally {
+    remindersRefreshing = false;
+  }
+}
+
 async function readJobsRaw() {
   try {
     return await fsReadFile(JOBS_PATH, "utf-8");
@@ -656,6 +780,11 @@ function broadcastJobs(raw) {
   for (const res of jobsClients) {
     try { res.write(payload); } catch { /* ignore */ }
   }
+}
+
+function todayLocalDate() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 // The local YYYY-MM-DD an ISO timestamp falls on.
@@ -886,7 +1015,7 @@ async function serveStatic(req, res, urlPath, baseDir, prefix) {
   }
 }
 
-// The dashapp is one page whatever the URL says — the routes (/sleep,
+// The dashapp is one page whatever the URL says — the routes (/planner,
 // /library/notes/foo.md, "/" for home) are the app's own, resolved in the browser.
 async function serveIndexHtml(res) {
   try {
@@ -1083,6 +1212,302 @@ async function handleDashapp(req, res) {
     return true;
   }
 
+  if (url === "/api/reminders") {
+    res.writeHead(200, { "Content-Type": MIME[".json"], "Cache-Control": "no-cache" });
+    res.end(JSON.stringify({ reminders: remindersCache.reminders, ready: remindersCache.ready }));
+    return true;
+  }
+
+  if (url === "/api/reminders/stream") {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    res.write(": connected\n\n");
+    // Send current cache immediately
+    res.write(`event: update\ndata: ${JSON.stringify({ reminders: remindersCache.reminders, ready: remindersCache.ready })}\n\n`);
+    remindersClients.add(res);
+    req.on("close", () => remindersClients.delete(res));
+    // Trigger a background refresh if cache is stale (>2 min) or empty
+    if (!remindersCache.ready || Date.now() - remindersCache.lastFetched > 120_000) {
+      refreshReminders();
+    }
+    return true;
+  }
+
+  if (url === "/api/reminders/refresh") {
+    // Fire-and-forget background refresh — clients receive the result via SSE.
+    refreshReminders();
+    res.writeHead(200, { "Content-Type": MIME[".json"] });
+    res.end(JSON.stringify({ ok: true, refreshing: remindersRefreshing }));
+    return true;
+  }
+
+  if (url === "/api/messages" || url.startsWith("/api/messages?")) {
+    const u = new URL(url, "http://localhost");
+    const limit = Math.max(1, Math.min(MESSAGES_MAX, parseInt(u.searchParams.get("limit") || String(MESSAGES_DEFAULT_LIMIT), 10)));
+    const msgs = messagesHistory.slice(-limit);
+    res.writeHead(200, { "Content-Type": MIME[".json"], "Cache-Control": "no-cache" });
+    res.end(JSON.stringify({ messages: msgs, total: messagesHistory.length }));
+    return true;
+  }
+
+  if (url === "/api/messages/stream") {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    res.write(": connected\n\n");
+    const msgs = messagesHistory.slice(-MESSAGES_DEFAULT_LIMIT);
+    res.write(`event: update\ndata: ${JSON.stringify({ messages: msgs, total: messagesHistory.length })}\n\n`);
+    messagesClients.add(res);
+    req.on("close", () => messagesClients.delete(res));
+    return true;
+  }
+
+  if (url === "/api/chat" || url.startsWith("/api/chat?")) {
+    const u = new URL(url, "http://localhost");
+    const limit = Math.max(1, Math.min(CHAT_MAX, parseInt(u.searchParams.get("limit") || String(CHAT_DEFAULT_LIMIT), 10)));
+    const msgs = chatHistory.slice(-limit);
+    res.writeHead(200, { "Content-Type": MIME[".json"], "Cache-Control": "no-cache" });
+    res.end(JSON.stringify({ messages: msgs, total: chatHistory.length }));
+    return true;
+  }
+
+  if (url === "/api/chat/stream") {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    res.write(": connected\n\n");
+    const msgs = chatHistory.slice(-CHAT_DEFAULT_LIMIT);
+    res.write(`event: update\ndata: ${JSON.stringify({ messages: msgs, total: chatHistory.length })}\n\n`);
+    chatClients.add(res);
+    req.on("close", () => chatClients.delete(res));
+    return true;
+  }
+
+  if (url === "/api/timeline" || url.startsWith("/api/timeline?")) {
+    try {
+      const u = new URL(url, "http://localhost");
+      const date = u.searchParams.get("date") || todayLocalDate();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        res.writeHead(400, { "Content-Type": MIME[".json"] });
+        res.end(JSON.stringify({ error: "Invalid date" }));
+        return true;
+      }
+      const filePath = join(TIMELINE_DIR, `${date}.json`);
+      let data = { blocks: [] };
+      try {
+        data = JSON.parse(await fsReadFile(filePath, "utf-8"));
+      } catch (err) {
+        if (err.code !== "ENOENT") throw err;
+      }
+      res.writeHead(200, { "Content-Type": MIME[".json"], "Cache-Control": "no-cache" });
+      res.end(JSON.stringify({ date, blocks: data.blocks || [], allDay: data.allDay || [], updatedAt: data.updatedAt || null }));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": MIME[".json"] });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return true;
+  }
+
+  // One day, every source: what the Review tab needs in a single request. Each
+  // source fails soft — one being unreachable shouldn't blank out the recap.
+  if (url === "/api/review" || url.startsWith("/api/review?")) {
+    const u = new URL(url, "http://localhost");
+    const date = u.searchParams.get("date") || todayLocalDate();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      res.writeHead(400, { "Content-Type": MIME[".json"] });
+      res.end(JSON.stringify({ error: "Invalid date" }));
+      return true;
+    }
+    const errors = {};
+
+    let timeline = { blocks: [], allDay: [] };
+    try {
+      const data = JSON.parse(await fsReadFile(join(TIMELINE_DIR, `${date}.json`), "utf-8"));
+      timeline = { blocks: data.blocks || [], allDay: data.allDay || [] };
+    } catch (err) {
+      if (err.code !== "ENOENT") errors.timeline = err.message;
+    }
+
+    // Weather comes from the daily snapshot the weather-csv-export job writes,
+    // so only days that job has run have a row.
+    let weather = null;
+    try {
+      const raw = await fsReadFile(join(REPORTS_DIR, "weather/macedonia_ohio.csv"), "utf8");
+      const line = raw.trim().split("\n").slice(1).find((l) => l.startsWith(`${date},`));
+      if (line) {
+        // icon is a later column — rows written before it exist stop at alerts.
+        const [, low, high, conditions, humidity, wind, alerts, icon] = splitCsvLine(line);
+        weather = {
+          low: Number(low),
+          high: Number(high),
+          conditions: conditions || "",
+          humidity: Number(humidity),
+          wind: Number(wind),
+          alerts: alerts || "",
+          icon: icon || "",
+        };
+      }
+    } catch (err) {
+      if (err.code !== "ENOENT") errors.weather = err.message;
+    }
+
+    // Expenses come from the month's PNC export: same columns and exclusions as
+    // /api/finances, narrowed to the one day.
+    let expenses = { items: [], total: 0 };
+    try {
+      const file = `pnc-${date.slice(0, 4)}.${date.slice(5, 7)}.csv`;
+      const raw = await fsReadFile(join(PNC_REPORTS_DIR, file), "utf8");
+      const items = [];
+      let total = 0;
+      for (const line of raw.trim().split("\n").slice(1)) {
+        const [rowDate, , , name, merchant, amountRaw, category, , , exclude] = line.split(",");
+        if (rowDate !== date || exclude === "true") continue;
+        const amount = parseFloat(String(amountRaw).replace(/−/g, "-"));
+        if (isNaN(amount) || amount <= 0) continue; // negatives are income/credits
+        items.push({
+          name: merchant || name || "(unknown)",
+          amount: Math.round(amount * 100) / 100,
+          category: category || "",
+        });
+        total += amount;
+      }
+      items.sort((a, b) => b.amount - a.amount);
+      expenses = { items, total: Math.round(total * 100) / 100 };
+    } catch (err) {
+      if (err.code !== "ENOENT") errors.expenses = err.message;
+    }
+
+    // Reminders themselves keep no history — completed ones get deleted — so
+    // this reads the day file the tasks-snapshot job writes. The file holds the
+    // whole open backlog; Review only wants this day, so open narrows to what
+    // was due that day and didn't get done.
+    let tasks = { completed: [], open: [] };
+    try {
+      const data = JSON.parse(await fsReadFile(join(TASKS_DIR, `${date}.json`), "utf-8"));
+      const completed = data.completed || [];
+      const done = new Set(completed.map((t) => t.id));
+      const open = (data.open || []).filter(
+        (t) => t.dueDate && localDateOf(t.dueDate) === date && !done.has(t.id)
+      );
+      tasks = { completed, open };
+    } catch (err) {
+      if (err.code !== "ENOENT") errors.tasks = err.message;
+    }
+
+    res.writeHead(200, { "Content-Type": MIME[".json"], "Cache-Control": "no-cache" });
+    res.end(JSON.stringify({ date, timeline, weather, expenses, tasks, errors }));
+    return true;
+  }
+
+  // One message, with its HTML body for the reader to render. Bodies never
+  // change once sent, so they're cached outright — reopening a message costs
+  // nothing.
+  if (url.startsWith("/api/email/message?")) {
+    const u = new URL(url, "http://localhost");
+    const account = u.searchParams.get("account") || "";
+    const id = u.searchParams.get("id") || "";
+    const manager = emailManagerFor(account);
+    if (!manager) {
+      res.writeHead(EMAIL_ACCOUNTS[account] ? 503 : 400, { "Content-Type": MIME[".json"] });
+      res.end(JSON.stringify({
+        error: EMAIL_ACCOUNTS[account]
+          ? `${EMAIL_ACCOUNTS[account].label} Gmail is not configured — run the OAuth flow.`
+          : `Unknown account "${account}".`,
+      }));
+      return true;
+    }
+    if (!id) {
+      res.writeHead(400, { "Content-Type": MIME[".json"] });
+      res.end(JSON.stringify({ error: "Missing id" }));
+      return true;
+    }
+    const key = `${account}:${id}`;
+    try {
+      let message = emailBodyCache.get(key);
+      if (!message) {
+        message = await manager.getMessage(id, { includeHtml: true });
+        emailBodyCache.set(key, message);
+        // Oldest out first — Map iterates in insertion order.
+        while (emailBodyCache.size > EMAIL_BODY_CACHE_MAX) {
+          emailBodyCache.delete(emailBodyCache.keys().next().value);
+        }
+      }
+      res.writeHead(200, { "Content-Type": MIME[".json"], "Cache-Control": "no-cache" });
+      res.end(JSON.stringify({ message }));
+    } catch (err) {
+      res.writeHead(502, { "Content-Type": MIME[".json"] });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return true;
+  }
+
+  if (url === "/api/email" || url.startsWith("/api/email?")) {
+    const u = new URL(url, "http://localhost");
+    const account = u.searchParams.get("account") || "personal";
+    const manager = emailManagerFor(account);
+    if (!manager) {
+      res.writeHead(EMAIL_ACCOUNTS[account] ? 503 : 400, { "Content-Type": MIME[".json"] });
+      res.end(JSON.stringify({
+        error: EMAIL_ACCOUNTS[account]
+          ? `${EMAIL_ACCOUNTS[account].label} Gmail is not configured — run the OAuth flow.`
+          : `Unknown account "${account}".`,
+      }));
+      return true;
+    }
+
+    const fresh = u.searchParams.get("refresh") === "1";
+    const cached = emailListCache.get(account);
+    if (!fresh && cached && Date.now() - cached.at < EMAIL_LIST_TTL) {
+      res.writeHead(200, { "Content-Type": MIME[".json"], "Cache-Control": "no-cache" });
+      res.end(JSON.stringify({ ...cached.payload, cached: true }));
+      return true;
+    }
+
+    try {
+      let pending = emailListInflight.get(account);
+      if (!pending) {
+        pending = fetchEmailList(account, manager).finally(() => emailListInflight.delete(account));
+        emailListInflight.set(account, pending);
+      }
+      const payload = await pending;
+      emailListCache.set(account, { at: Date.now(), payload });
+      res.writeHead(200, { "Content-Type": MIME[".json"], "Cache-Control": "no-cache" });
+      res.end(JSON.stringify({ ...payload, cached: false }));
+    } catch (err) {
+      // A stale inbox beats an error page — say so and let the page mark it.
+      if (cached) {
+        res.writeHead(200, { "Content-Type": MIME[".json"], "Cache-Control": "no-cache" });
+        res.end(JSON.stringify({ ...cached.payload, cached: true, stale: true, error: err.message }));
+      } else {
+        res.writeHead(502, { "Content-Type": MIME[".json"] });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    }
+    return true;
+  }
+
+  if (url === "/api/calendar" || url.startsWith("/api/calendar?")) {
+    const u = new URL(url, "http://localhost");
+    const days = Math.max(1, Math.min(30, parseInt(u.searchParams.get("days") || "7", 10)));
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start.getTime() + days * 86400000);
+    const events = getCachedEvents({ startDate: start.toISOString(), endDate: end.toISOString() });
+    res.writeHead(200, { "Content-Type": MIME[".json"], "Cache-Control": "no-cache" });
+    res.end(JSON.stringify({ events, cacheAge: getCacheTimestamp() ? Date.now() - getCacheTimestamp() : null }));
+    return true;
+  }
+
   if (url === "/api/finances" || url.startsWith("/api/finances?")) {
     try {
       const files = await fsReaddir(PNC_REPORTS_DIR);
@@ -1137,6 +1562,81 @@ async function handleDashapp(req, res) {
     return true;
   }
 
+  if (url === "/api/api-usage" || url.startsWith("/api/api-usage?")) {
+    const adminKey = process.env.ANTHROPIC_ADMIN_KEY;
+    if (!adminKey) {
+      res.writeHead(500, { "Content-Type": MIME[".json"] });
+      res.end(JSON.stringify({ error: "ANTHROPIC_ADMIN_KEY not configured" }));
+      return true;
+    }
+    // Cache for 10 minutes to avoid rate limits (admin API is strict)
+    if (apiUsageCache && Date.now() - apiUsageCacheTime < 600_000) {
+      res.writeHead(200, { "Content-Type": MIME[".json"], "Cache-Control": "no-cache" });
+      res.end(apiUsageCache);
+      return true;
+    }
+    try {
+      const now = new Date();
+      const curYear = now.getUTCFullYear();
+      const curMonth = now.getUTCMonth(); // 0-based
+      const curMonthStr = `${curYear}-${String(curMonth + 1).padStart(2, "0")}`;
+
+      const anthropicDir = join(process.env.ONEDRIVE_PATH, "dashbook", "data", "reports", "anthropic");
+      const usageFile = join(anthropicDir, "usage.json");
+
+      const apiHeaders = { "anthropic-version": "2023-06-01", "x-api-key": adminKey };
+      const fetchCostMonth = async (y, m) => {
+        const start = `${y}-${String(m + 1).padStart(2, "0")}-01T00:00:00Z`;
+        let ey = y, em = m + 1;
+        if (em > 11) { em = 0; ey++; }
+        const end = `${ey}-${String(em + 1).padStart(2, "0")}-01T00:00:00Z`;
+        const r = await fetch(`https://api.anthropic.com/v1/organizations/cost_report?starting_at=${start}&ending_at=${end}&bucket_width=1d&limit=31`, { headers: apiHeaders });
+        if (!r.ok) throw new Error(`Anthropic API ${r.status}`);
+        const d = await r.json();
+        return d.data.map(b => ({ date: b.starting_at.slice(0, 10), cents: b.results.reduce((a, r) => a + parseFloat(r.amount), 0) }));
+      };
+
+      // Load stored historical data
+      let stored = {};
+      try { stored = JSON.parse(await fsReadFile(usageFile, "utf8")); } catch {}
+
+      // Only fetch current month from the API (1 request)
+      const currentDays = await fetchCostMonth(curYear, curMonth);
+
+      // Store current month in history
+      stored[curMonthStr] = currentDays;
+
+      // Persist (current month gets updated each fetch)
+      await fsMkdir(anthropicDir, { recursive: true }).catch(() => {});
+      await fsWriteFile(usageFile, JSON.stringify(stored, null, 2));
+
+      // Build response from stored data + live current month
+      const months = Object.entries(stored)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([m, days]) => {
+          const [y, mo] = m.split("-").map(Number);
+          return {
+            month: m,
+            label: new Date(y, mo - 1).toLocaleDateString([], { month: "short", year: "numeric" }),
+            totalCents: days.reduce((s, d) => s + d.cents, 0),
+            days,
+          };
+        });
+
+      const currentMonthCents = currentDays.reduce((s, d) => s + d.cents, 0);
+
+      const json = JSON.stringify({ days: currentDays, months, currentMonthCents });
+      apiUsageCache = json;
+      apiUsageCacheTime = Date.now();
+      res.writeHead(200, { "Content-Type": MIME[".json"], "Cache-Control": "no-cache" });
+      res.end(json);
+    } catch (err) {
+      res.writeHead(502, { "Content-Type": MIME[".json"] });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return true;
+  }
+
   if (url === "/api/jobs/stream") {
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
@@ -1155,7 +1655,7 @@ async function handleDashapp(req, res) {
   }
 
   // Anything left that a browser is asking for as a page is a dashapp route —
-  // /sleep, /library/notes/some/file.md — so hand back the app and let its router read
+  // /planner, /library/notes/some/file.md — so hand back the app and let its router read
   // the path. Matching on Accept rather than on the shape of the path is what
   // lets a route carry a filename (/library/notes/foo.md) without being mistaken for a
   // missing static file. Sub-resource requests and unknown /api/ paths don't
@@ -1190,6 +1690,7 @@ createServer(async (req, res) => {
   const isDashMessage = req.method === "POST" && req.url === "/api/dash-message";
   const isDashChat = req.method === "POST" && req.url === "/api/dash-chat";
   const isTelegramMessage = req.method === "POST" && req.url === "/api/telegram-message";
+  const isCompleteReminder = req.method === "POST" && req.url === "/api/reminders/complete";
   const isCreateJob = req.method === "POST" && req.url === "/api/jobs/create";
   const isDeleteJob = req.method === "POST" && req.url === "/api/jobs/delete";
   const isToggleJob = req.method === "POST" && req.url === "/api/jobs/toggle";
@@ -1198,6 +1699,9 @@ createServer(async (req, res) => {
   const isSaveSystemJobsConfig = req.method === "POST" && req.url === "/api/system/jobs-config";
   const isRestartSystem = req.method === "POST" && req.url === "/api/system/restart";
   const isSaveLibrary = req.method === "POST" && req.url === "/api/library/save";
+  const isSaveTimeline = req.method === "POST" && req.url === "/api/timeline/save";
+  const isRefreshTimelineCalendar = req.method === "POST" && req.url === "/api/timeline/refresh-calendar";
+  const isEmailAssist = req.method === "POST" && req.url === "/api/email/assist";
   const isLibraryAssist = req.method === "POST" && req.url === "/api/library/assist";
   const isNutritionLookup = req.method === "POST" && req.url === "/api/nutrition/lookup";
   const isNutritionAssist = req.method === "POST" && req.url === "/api/nutrition/assist";
@@ -1208,6 +1712,158 @@ createServer(async (req, res) => {
   const isLogSave = req.method === "POST" && req.url === "/api/food-logs/save";
   const isLogDelete = req.method === "POST" && req.url === "/api/food-logs/delete";
   const isGroupDelete = req.method === "POST" && req.url === "/api/groups/delete";
+  const isEmailSend = req.method === "POST" && req.url === "/api/email/send";
+  const isEmailMark = req.method === "POST" && req.url === "/api/email/mark";
+  const isEmailUnsubscribe = req.method === "POST" && req.url === "/api/email/unsubscribe";
+
+  // Unsubscribe, driven by the sender's own List-Unsubscribe header.
+  //
+  // The page sends a message id and nothing else: the endpoint it hits is read
+  // back off that message's headers here. A URL posted up from the browser
+  // would be a URL an email chose, and this would happily POST to it.
+  if (isEmailUnsubscribe) {
+    try {
+      const parsed = await readJsonRequest(req);
+      const account = (parsed?.account || "").trim();
+      const id = (parsed?.id || "").trim();
+      const manager = emailManagerFor(account);
+      if (!manager || !id) {
+        res.writeHead(400, { "Content-Type": "application/json" })
+          .end(JSON.stringify({ error: manager ? "Missing id" : `Unknown account "${account}".` }));
+        return;
+      }
+
+      const key = `${account}:${id}`;
+      const message = emailBodyCache.get(key) || await manager.getMessage(id, { includeHtml: true });
+      emailBodyCache.set(key, message);
+      const unsub = message.unsubscribe;
+      if (!unsub) {
+        res.writeHead(422, { "Content-Type": "application/json" })
+          .end(JSON.stringify({ error: "This message has no unsubscribe header." }));
+        return;
+      }
+
+      // The one-click case (RFC 8058): the sender has said a bare POST is
+      // enough, so it never has to leave the app.
+      if (unsub.oneClick) {
+        const r = await fetch(unsub.url, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: "List-Unsubscribe=One-Click",
+          redirect: "follow",
+          signal: AbortSignal.timeout(15_000),
+        });
+        console.log(`   🚫 One-click unsubscribe (${account}) → ${new URL(unsub.url).host} [${r.status}]`);
+        if (!r.ok) {
+          res.writeHead(502, { "Content-Type": "application/json" })
+            .end(JSON.stringify({ error: `Sender's endpoint answered ${r.status}.`, url: unsub.url }));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json" })
+          .end(JSON.stringify({ ok: true, action: "one-click", host: new URL(unsub.url).host }));
+        return;
+      }
+
+      // No mailto, or a URL that wants a real page: hand the link back and let
+      // the browser open it. Finishing on the sender's own site is the point —
+      // guessing at their form from here would be worse.
+      if (unsub.url) {
+        res.writeHead(200, { "Content-Type": "application/json" })
+          .end(JSON.stringify({ ok: true, action: "open", url: unsub.url, host: new URL(unsub.url).host }));
+        return;
+      }
+
+      // mailto: only. The address, subject and body are all the sender's.
+      const mail = new URL(unsub.mailto);
+      const to = decodeURIComponent(mail.pathname);
+      const sent = await manager.sendMessage({
+        to,
+        subject: mail.searchParams.get("subject") || "unsubscribe",
+        body: mail.searchParams.get("body") || "unsubscribe",
+      });
+      console.log(`   🚫 Unsubscribe mail (${account}) → ${to} (${sent.id})`);
+      res.writeHead(200, { "Content-Type": "application/json" })
+        .end(JSON.stringify({ ok: true, action: "mailto", to }));
+    } catch (err) {
+      const status = err.message === "Invalid JSON" ? 400 : 502;
+      res.writeHead(status, { "Content-Type": "application/json" }).end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // Read/unread. The cached inbox is patched in place rather than dropped —
+  // one label changed is no reason to pay for 200 fetches again.
+  if (isEmailMark) {
+    try {
+      const parsed = await readJsonRequest(req);
+      const account = (parsed?.account || "").trim();
+      const id = (parsed?.id || "").trim();
+      const read = parsed?.read !== false;
+      const manager = emailManagerFor(account);
+      if (!manager || !id) {
+        res.writeHead(400, { "Content-Type": "application/json" })
+          .end(JSON.stringify({ error: manager ? "Missing id" : `Unknown account "${account}".` }));
+        return;
+      }
+      await manager.setRead(id, read);
+
+      const cached = emailListCache.get(account);
+      const row = cached?.payload.messages.find((m) => m.id === id);
+      if (row) {
+        row.unread = !read;
+        row.labels = read
+          ? (row.labels || []).filter((l) => l !== "UNREAD")
+          : [...new Set([...(row.labels || []), "UNREAD"])];
+      }
+      const body = emailBodyCache.get(`${account}:${id}`);
+      if (body) body.unread = !read;
+
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: true, id, unread: !read }));
+    } catch (err) {
+      const status = err.message === "Invalid JSON" ? 400 : 502;
+      res.writeHead(status, { "Content-Type": "application/json" }).end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // The one thing the Email page does that isn't reading. The page confirms
+  // before it gets here — this end only checks that it has somewhere to send.
+  if (isEmailSend) {
+    try {
+      const parsed = await readJsonRequest(req);
+      const account = (parsed?.account || "").trim();
+      const manager = emailManagerFor(account);
+      if (!manager) {
+        res.writeHead(EMAIL_ACCOUNTS[account] ? 503 : 400, { "Content-Type": "application/json" })
+          .end(JSON.stringify({
+            error: EMAIL_ACCOUNTS[account]
+              ? `${EMAIL_ACCOUNTS[account].label} Gmail is not configured.`
+              : `Unknown account "${account}".`,
+          }));
+        return;
+      }
+      const to = (parsed.to || "").trim();
+      if (!to) {
+        res.writeHead(400, { "Content-Type": "application/json" })
+          .end(JSON.stringify({ error: "Needs a recipient." }));
+        return;
+      }
+      const result = await manager.sendMessage({
+        to,
+        cc: (parsed.cc || "").trim() || undefined,
+        bcc: (parsed.bcc || "").trim() || undefined,
+        subject: (parsed.subject || "").trim(),
+        body: parsed.body || "",
+        replyToMessageId: (parsed.replyToMessageId || "").trim() || undefined,
+      });
+      console.log(`   ✉️  Sent from ${account} Gmail → ${to} (${result.id})`);
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: true, ...result }));
+    } catch (err) {
+      const status = err.message === "Invalid JSON" ? 400 : 502;
+      res.writeHead(status, { "Content-Type": "application/json" }).end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
 
   if (isSaveSystemJobsConfig) {
     try {
@@ -1461,6 +2117,38 @@ createServer(async (req, res) => {
     return;
   }
 
+  // Drafts the body (and subject) of whatever is in the composer. Writes
+  // nothing and sends nothing — the draft comes back for Steve to edit, and
+  // only his Send button reaches /api/email/send. The message being replied to
+  // is read here rather than posted up, so the model sees the real thing.
+  if (isEmailAssist) {
+    handleAssistRequest(req, res, "email assist", async ({ text, imagePaths, parsed, signal }) => {
+      const account = String(parsed?.account || "");
+      const manager = emailManagerFor(account);
+      if (!manager) throw new Error(`Unknown account "${account}".`);
+      const from = await manager.getEmailAddress().catch(() => "");
+
+      let reply = null;
+      const replyId = String(parsed?.replyToMessageId || "").trim();
+      if (replyId) {
+        const key = `${account}:${replyId}`;
+        const msg = emailBodyCache.get(key) || await manager.getMessage(replyId, { includeHtml: true });
+        emailBodyCache.set(key, msg);
+        reply = { from: msg.from, subject: msg.subject, text: msg.text || msg.snippet || "" };
+      }
+
+      return emailAssist({
+        question: text,
+        imagePaths,
+        draft: parsed?.draft || {},
+        reply,
+        from,
+        signal,
+      });
+    });
+    return;
+  }
+
   // Library: the same helper over whatever file the browser has open. The file
   // is read here rather than posted, so the model works from what's on disk;
   // an open image is handed over as an image. Writes nothing — a proposed file
@@ -1709,6 +2397,135 @@ createServer(async (req, res) => {
     return;
   }
 
+  if (isSaveTimeline) {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", async () => {
+      let parsed;
+      try { parsed = JSON.parse(body); } catch {
+        res.writeHead(400, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "Invalid JSON" }));
+        return;
+      }
+      const { date, blocks } = parsed || {};
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date || "")) {
+        res.writeHead(400, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "Invalid date" }));
+        return;
+      }
+      if (!Array.isArray(blocks)) {
+        res.writeHead(400, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "blocks must be an array" }));
+        return;
+      }
+      const timeRe = /^([01]\d|2[0-3]):[0-5]\d$/;
+      const cleanBlocks = [];
+      for (const b of blocks) {
+        if (!b || typeof b !== "object") continue;
+        const start = String(b.start || "");
+        const end = String(b.end || "");
+        const title = String(b.title || "").slice(0, 200);
+        const notes = String(b.notes || "").slice(0, 2000);
+        if (!timeRe.test(start) || !timeRe.test(end)) {
+          res.writeHead(400, { "Content-Type": "application/json" }).end(JSON.stringify({ error: `Invalid time in block: ${title || "(untitled)"}` }));
+          return;
+        }
+        const clean = {
+          id: typeof b.id === "string" && b.id ? b.id : `b_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          start,
+          end,
+          title,
+          notes,
+        };
+        // Preserve calendar ownership markers — without these the planner-sync
+        // job can't tell its own blocks from Steve's and would duplicate them.
+        if (b.source === "calendar" && typeof b.calEventId === "string" && b.calEventId) {
+          clean.source = "calendar";
+          clean.calEventId = b.calEventId;
+        }
+        cleanBlocks.push(clean);
+      }
+      cleanBlocks.sort((a, b) => a.start.localeCompare(b.start));
+      try {
+        await fsMkdir(TIMELINE_DIR, { recursive: true });
+        const filePath = join(TIMELINE_DIR, `${date}.json`);
+        // The editor doesn't own the all-day pills; carry them through untouched.
+        let allDay = [];
+        try {
+          const prior = JSON.parse(await fsReadFile(filePath, "utf-8"));
+          if (Array.isArray(prior.allDay)) allDay = prior.allDay;
+        } catch (err) {
+          if (err.code !== "ENOENT") throw err;
+        }
+        const payload = { date, blocks: cleanBlocks, allDay, updatedAt: new Date().toISOString() };
+        await fsWriteFile(filePath, JSON.stringify(payload, null, 2), "utf-8");
+        res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(payload));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" }).end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  if (isRefreshTimelineCalendar) {
+    try {
+      const parsed = await readJsonRequest(req);
+      const date = String(parsed?.date || "");
+      if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        res.writeHead(400, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "Invalid date" }));
+        return;
+      }
+      // Pull the calendars first. This endpoint is user-initiated ("refresh"),
+      // and reconciling against the 5-minute cache would silently show stale
+      // data — edits made in Google seconds ago would appear to be ignored.
+      await refreshCalendarCache();
+
+      // With a date: just that day (what the dashboard button asks for, so the
+      // day on screen refreshes immediately). Without: the same full window
+      // sweep the hourly job performs.
+      const result = date
+        ? await syncCalendarToPlanner(date)
+        : { days: await syncCalendarWindow() };
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(result));
+    } catch (err) {
+      const status = err.message === "Invalid JSON" ? 400 : 500;
+      res.writeHead(status, { "Content-Type": "application/json" }).end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+
+  if (isCompleteReminder) {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", async () => {
+      let parsed;
+      try {
+        parsed = JSON.parse(body);
+      } catch {
+        res.writeHead(400, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "Invalid JSON" }));
+        return;
+      }
+      const id = parsed && parsed.id;
+      if (!id) {
+        res.writeHead(400, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "Missing id" }));
+        return;
+      }
+      try {
+        await completeReminder(id);
+        // Optimistically drop it from cache and broadcast, then refresh in bg.
+        remindersCache = {
+          ...remindersCache,
+          reminders: remindersCache.reminders.filter((r) => r.id !== id),
+        };
+        broadcastReminders();
+        refreshReminders();
+        res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: true }));
+      } catch (err) {
+        console.error("Complete reminder error:", err.message);
+        res.writeHead(500, { "Content-Type": "application/json" }).end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
   if (isTelegramMessage) {
     let body = "";
     req.on("data", (chunk) => (body += chunk));
@@ -1860,6 +2677,10 @@ createServer(async (req, res) => {
 agent.startBackgroundTasks({ userId: ALLOWED_USER_ID, bot, deliver: deliverMessage }).catch((err) => {
   console.error("  ❌ Failed to start background tasks:", err.message);
 });
+
+// Warm the reminders cache on boot, then refresh every 2 minutes.
+refreshReminders();
+setInterval(refreshReminders, 2 * 60 * 1000);
 
 // Retry Telegram connection in case network isn't ready after reboot
 async function launchBot() {

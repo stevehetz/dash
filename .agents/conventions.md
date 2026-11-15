@@ -21,6 +21,6 @@
 ## Real-world side effects — be careful
 
 `cli.js` and the integration tools perform **real actions**: sending email, creating
-Google reminders and calendar events, reading bank/transaction (Plaid) data, printing,
+Apple/Google reminders and calendar events, reading bank/transaction (Plaid) data, printing,
 and consuming the subscription. Don't run side-effecting commands just to "test" — pick the
 narrowest read-only path when exploring.

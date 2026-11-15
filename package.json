@@ -25,6 +25,7 @@
     "@modelcontextprotocol/sdk": "^1.28.0",
     "cheerio": "^1.2.0",
     "dotenv": "^16.4.7",
+    "googleapis": "^171.4.0",
     "plaid": "^41.4.0",
     "puppeteer": "^24.40.0",
     "resend": "^6.9.4",

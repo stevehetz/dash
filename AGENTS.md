@@ -6,15 +6,15 @@ relevant one when a task calls for it.
 
 ## What Dash is
 
-A personal Telegram bot powered by Codex that manages Steve's files, calendar,
-email, finances, health, and more. It also serves a web dashboard ("dashapp") and
+A personal Telegram bot powered by Codex that manages Steve's files, calendar, tasks,
+reminders, email, finances, health, and more. It also serves a web dashboard ("dashapp") and
 a voice interface. Runs on Steve's Mac via pm2 (`dash-bot`). Local: `~/dev/dash` ·
 GitHub: `git@github.com:stevehetz/dash.git`.
 
 ## Always applies
 
 - **No test or lint suite.** Validate JS with `node --check <file>`; never claim tests ran or passed.
-- **`cli.js` and the integration tools do real things** — send email, create calendar
+- **`cli.js` and the integration tools do real things** — send email, create reminders/calendar
   events, read bank data, print, consume the subscription. Don't run side-effecting commands
   just to "test." (detail: `.agents/conventions.md`)
 - **Don't commit unless asked.** **Never commit secrets — this repo is public.** `config/.env`,
@@ -40,7 +40,7 @@ node tools.js list       # the tools the agent has; call/help run one (see archi
 node --check <file.js>   # syntax-check a change (there is no test suite)
 ```
 
-To exercise an existing capability (weather, calendar, file ops, Google, finances),
+To exercise an existing capability (weather, reminders, calendar, file ops, Google, finances),
 prefer `cli.js` over editing `bot.js` just to invoke it.
 
 ## Detailed guides (read on demand)

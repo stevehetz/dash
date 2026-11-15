@@ -2,7 +2,7 @@
 
 **A self-hosted personal AI assistant running on a Mac mini.**
 
-Dash is an always-on assistant that I built and run at home. It pairs an LLM agent with a set of tool integrations: files, banking, scheduled jobs, a headless browser, a printer and more. You can reach it from a web dashboard, from Telegram, or by voice ("Hey Dash").
+Dash is an always-on assistant that I built and run at home. It pairs an LLM agent with a set of tool integrations: email, Apple Calendar and Reminders, files, banking, scheduled jobs, a headless browser, a printer and more. You can reach it from a web dashboard, from Telegram, or by voice ("Hey Dash").
 
 ![Dash web dashboard](docs/images/dashboard.png)
 
@@ -43,12 +43,17 @@ The dashboard is a dark-themed, mobile-friendly single-page app served directly 
 
 | Page | What it does |
 |---|---|
+| **Planner** | A day timeline synced from Apple Calendar, a calendar view, a Review tab recapping each day's plan, weather and spending, and a Tasks tab of open Apple Reminders. |
+| **Email** | Personal, professional and Dash's own Gmail inboxes, with a reader, compose and reply, one-click unsubscribe and an AI drafting assistant. |
 | **Nutrition** | A food database with full nutrient profiles, reusable meal groups, and daily food logs tracked against nutrient targets. You can describe a food or **upload a photo of a label**, and Dash looks up the nutrition facts for you to review before saving. |
 | **Finances** | Account balances and an income and expense summary from linked bank accounts, using **Plaid**. |
 | **Jobs** | A scheduler for recurring prompts, for example "every weekday at 7am, summarize my calendar." You can create, edit, toggle and delete jobs inline, and run status streams live to the page. |
 | **Library** | A file browser for my notes vault, with viewers for Markdown, JSON, PDFs and images, plus an in-place editor. **Ask Dash** answers questions about the open file or proposes edits to it. |
 | **Health** | Lab results and vitals plotted over time, with reference-range bands that flag out-of-range values. |
 | **System** | Live configuration editing and a one-click service restart. |
+
+![Email compose: a plain-language request is drafted into a complete email by Dash](docs/images/email-compose.png)
+*The Email drafting assistant. Describe the message in plain language, click **Draft it**, and Dash writes the subject and body for review before anything is sent.*
 
 ![Nutrition page: food database with daily min, target and max rows, and a running total for the selected meal cycle](docs/images/nutrition-food.png)
 *The Nutrition page. Describe a food or add a photo, and Dash fills in the nutrients. Each food is tracked against daily minimum, target and maximum values.*
@@ -75,6 +80,9 @@ Typical jobs include a pre-market briefing on the day's top market stories, a mo
 - **Telegram:** a chat interface locked to a single user ID. It accepts photos and documents, for example "print this" or "save this image."
 - **Voice:** each room has a microphone listening for a custom **"Hey Dash"** wake word (Picovoice Porcupine). Speech is transcribed with **Whisper**, and the reply is spoken back on the speaker in the same room.
 - **Remote voice:** lightweight clients for iPhone and MacBook send requests to the same agent over the tailnet.
+
+![Telegram: a scheduled morning weather report and an email digest listing messages Dash triaged and marked read](docs/images/telegram.png)
+*Dash on Telegram. Jobs deliver results here, like the morning weather report, and the email digest reports what it triaged in the inbox.*
 
 ---
 
@@ -106,6 +114,10 @@ MacBook   │  Browser (dashboard)       ─┤            Tailscale Serve      
 
 | Provider | Capabilities |
 |---|---|
+| **Apple Calendar** | List, search, create and delete events by asking in plain language |
+| **Apple Reminders & Notes** | Create and complete reminders, and search, read and create notes |
+| **Email** | Read, search, triage and send from personal and professional Gmail, plus a dedicated agent inbox; new mail to the agent inbox is forwarded to Telegram |
+| **Weather** | Current conditions and forecasts, plus a daily weather log |
 | **Files** | Read, write, append to and organize notes; save images that come in from chat |
 | **Banking** | Check balances, list transactions and search them (Plaid) |
 | **Scheduled jobs** | Create, list, toggle and remove recurring tasks by asking in plain language |
@@ -121,14 +133,12 @@ Dash has been in daily use since March 2026, and its feature set has changed wit
 
 | Integration | What it did | Active |
 |---|---|---|
-| **Calendars** (Google Calendar, Apple Calendar) | Listed, searched, created and deleted events by asking in plain language | Mar – Sep 2026 |
-| **Apple Reminders & Notes** | Created reminders and notes, polled reminders into the dashboard, and turned Siri-dictated notes from Apple Watch into agent requests | Mar – Sep 2026 |
+| **Google Calendar** | Listed, searched, created and deleted Google Calendar events | Mar – Sep 2026 |
 | **Fitness** (Apple Health via Health Auto Export, StreamFit CrossFit, Oura Ring) | A webhook brought in workouts and runs, plus CrossFit history and sleep data. A unified Fitness page and an AI workout assistant summarized training and fed a daily review. | Apr – Sep 2026 |
-| **Email** (Gmail, plus a dedicated agent inbox) | Read, searched, triaged and sent email from personal and assistant accounts, with an AI email assistant in the dashboard | Mar – Sep 2026 |
 | **Google Workspace** (Drive, Docs, Sheets, Tasks) | Created and edited documents and spreadsheets, and managed task lists | Mar – Sep 2026 |
 | **Desktop control** | Operated the Mac directly from screenshots (click, type, scroll, open apps) | Mar – Aug 2026 |
 | **Long-term memory** | Saved and recalled facts between conversations. Replaced by a single standing-instructions file. | Mar – Aug 2026 |
-| **SMS, web search, weather** | Text messages through Twilio, web search and fetch, and current weather and forecasts | Mar – Sep 2026 |
+| **SMS, web search** | Text messages through Twilio, and web search and fetch | Mar – Sep 2026 |
 
 All of this remains in the project's git history.
 

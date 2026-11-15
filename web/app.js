@@ -795,14 +795,24 @@ if (!SAVED_GROUPS_ENABLED) document.querySelector('.tab[data-tab="groups"]')?.se
 // must not carry it.
 const tabBtns = document.querySelectorAll(".tab:not([hidden])");
 const tabPanels = {
+  telegram: document.getElementById("tab-telegram"),
   jobs: document.getElementById("tab-jobs"),
   system: document.getElementById("tab-system"),
+  reminders: document.getElementById("tab-reminders"),
+  "email-personal": document.getElementById("tab-email-personal"),
+  "email-professional": document.getElementById("tab-email-professional"),
+  "email-dashbot": document.getElementById("tab-email-dashbot"),
+  calendar: document.getElementById("tab-calendar"),
   finances: document.getElementById("tab-finances"),
+  planner: document.getElementById("tab-timeline"),
+  review: document.getElementById("tab-review"),
   library: document.getElementById("tab-library"),
   health: document.getElementById("tab-health"),
   nutrition: document.getElementById("tab-nutrition"),
   groups: document.getElementById("tab-groups"),
   "food-logs": document.getElementById("tab-food-logs"),
+  "api-usage": document.getElementById("tab-api-usage"),
+  chat: document.getElementById("tab-chat"),
   home: document.getElementById("tab-home"),
 };
 
@@ -812,6 +822,8 @@ const tabPanels = {
 // data-page — DOM order there is both the tab order and the swipe order.
 const PAGE_ICONS = {
   home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/>',
+  planner: '<rect x="3" y="4" width="18" height="17" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/>',
+  email: '<rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M3 7.5 12 13l9-5.5"/>',
   health: '<path d="M20.8 6.6a5 5 0 0 0-7.1 0L12 8.3l-1.7-1.7a5 5 0 1 0-7.1 7.1L12 21l8.8-8.3a5 5 0 0 0 0-6.1z"/>',
   nutrition: '<path d="M6 3v7a2 2 0 0 0 4 0V3"/><line x1="8" y1="12" x2="8" y2="21"/><path d="M17 3c-1.7 1.2-2.5 3.2-2.5 5.6S15.3 12.8 17 13.5V21"/>',
   finances: '<line x1="12" y1="2" x2="12" y2="22"/><path d="M17 6H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
@@ -821,6 +833,11 @@ const PAGE_ICONS = {
 };
 const PAGES = [
   { key: "home", label: "Home" },
+  // Review is a tab of Planner, not a page of its own — /review still routes,
+  // it just lands on the Planner page now.
+  { key: "planner", label: "Planner" },
+  // All three Gmail inboxes, one tab each.
+  { key: "email", label: "Email" },
   { key: "nutrition", label: "Nutrition" },
   { key: "finances", label: "Finances" },
   { key: "jobs", label: "Jobs" },
@@ -1222,17 +1239,1763 @@ function setTab(tab, { updatePath = true } = {}) {
   for (const [key, el] of Object.entries(tabPanels)) {
     el.hidden = key !== tab;
   }
-  // <main> is the app's single scroll container. Reset it synchronously after
-  // the panel swap so the first painted frame is already at the correct scroll.
-  mainEl.scrollTop = 0;
+  // <main> is the app's single scroll container. Reset its scrollTop to 0 for
+  // every tab except chat/messages, which scroll to their bottom below. This
+  // happens synchronously after the panel swap so the first painted frame is
+  // already at the correct scroll — no flash.
+  if (tab === "chat" || tab === "telegram") {
+    mainEl.scrollTop = mainEl.scrollHeight;
+  } else {
+    mainEl.scrollTop = 0;
+  }
   if (tab === "library" && !libraryLoaded) loadLibraryItems();
   if (tab === "system" && !systemLoaded) loadSystemConfig();
   if (tab === "health" && !healthLoaded) loadHealth();
   if (tab === "nutrition" && !nutritionLoaded) loadNutrition();
   if (tab === "groups" && !groupsLoaded) loadGroups();
   if (tab === "food-logs" && !logsLoaded) loadLogs();
+  if (tab === "chat") {
+    if (!chatLoaded) loadChat();
+    scheduleScrollChatToBottom();
+  } else if (tab === "telegram") {
+    if (!messagesLoaded) loadMessages();
+    // Always jump to newest when navigating to the tab. If messages aren't
+    // loaded yet, renderMessages() will trigger another scroll once content
+    // arrives.
+    scheduleScrollMessagesToBottom();
+  }
   if (tab === "finances") loadFinances();
+  if (tab === "api-usage") loadApiUsage();
+  if (tab === "calendar") loadCalendar();
+  // Its own TTL, so coming back inside two minutes shows what's already there.
+  emailTabs[tab]?.load();
+  if (tab === "planner" && !timelineLoadedDate) loadTimeline(todayLocalISO());
+  // Always refresh: the day shown is sticky, but its data (spend, weather) isn't.
+  if (tab === "review") loadReview(reviewDate || todayLocalISO());
+  if (tab === "reminders") startRemindersPolling();
+  else stopRemindersPolling();
 }
+
+// ── Calendar ──────────────────────────────────────────
+const calendarListEl = document.getElementById("calendar-list");
+const calendarCountEl = document.getElementById("calendar-count");
+let calendarLastFetched = 0;
+
+function fmtCalDate(iso) {
+  const d = new Date(iso);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const evDate = new Date(d);
+  evDate.setHours(0, 0, 0, 0);
+  if (evDate.getTime() === today.getTime()) return "Today";
+  if (evDate.getTime() === tomorrow.getTime()) return "Tomorrow";
+  return d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+}
+
+function fmtCalTime(iso) {
+  return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function fmtCalRange(ev) {
+  if (ev.allDay) return "All day";
+  return `${fmtCalTime(ev.startDate)} – ${fmtCalTime(ev.endDate)}`;
+}
+
+function calSourceClass(ev) {
+  return ev.source === "google" ? "cal-google" : "cal-apple";
+}
+
+function renderCalendarEvent(ev) {
+  const loc = ev.location ? `<div class="cal-location">${escapeHtml(ev.location)}</div>` : "";
+  return `
+    <div class="cal-event ${calSourceClass(ev)}${ev.allDay ? " cal-allday" : ""}">
+      <div class="cal-time">${fmtCalRange(ev)}</div>
+      <div class="cal-details">
+        <div class="cal-summary">${escapeHtml(ev.summary || "(no title)")}</div>
+        ${loc}
+        <div class="cal-meta">${escapeHtml(ev.calendar)}</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderCalendar(events) {
+  calendarCountEl.textContent = events.length ? `${events.length} event${events.length === 1 ? "" : "s"}` : "";
+  if (events.length === 0) {
+    calendarListEl.innerHTML = `<div class="empty">No upcoming events.</div>`;
+    return;
+  }
+  // Group events by date
+  const groups = new Map();
+  for (const ev of events) {
+    const key = fmtCalDate(ev.startDate);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(ev);
+  }
+  let html = "";
+  for (const [day, evs] of groups) {
+    html += `<div class="cal-day-group">`;
+    html += `<div class="cal-day-label">${escapeHtml(day)}</div>`;
+    html += evs.map(renderCalendarEvent).join("");
+    html += `</div>`;
+  }
+  calendarListEl.innerHTML = html;
+}
+
+async function loadCalendar() {
+  if (Date.now() - calendarLastFetched < 120_000 && calendarListEl.querySelector(".cal-event")) return;
+  const hasExisting = !!calendarListEl.querySelector(".cal-event");
+  if (!hasExisting) {
+    calendarListEl.innerHTML = `<div class="empty">Loading…</div>`;
+  }
+  try {
+    const res = await fetch("/api/calendar?days=7", { cache: "no-store" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    calendarLastFetched = Date.now();
+    renderCalendar(data.events || []);
+  } catch (err) {
+    if (!hasExisting) {
+      calendarListEl.innerHTML = `<div class="empty">Failed to load: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+}
+
+// Let a textarea grow with its content instead of scrolling inside a fixed box.
+function autoGrowTextarea(ta) {
+  const fit = () => {
+    ta.style.height = "auto";
+    ta.style.height = `${ta.scrollHeight}px`;
+  };
+  ta.addEventListener("input", fit);
+  fit();
+  return fit;
+}
+
+// ── Email ──────────────────────────────────────────────
+// A reader over the last 200 of each inbox, and nothing else: no sending, no
+// filing, no marking read. Opening a message here leaves it exactly as Gmail
+// has it, which is deliberate — the phone is still the place mail gets dealt
+// with, this is the place it gets looked at.
+//
+// The server does the expensive half (see /api/email in bot.js): 200 rows is
+// 200 Gmail calls, cached for two minutes, so switching between the two tabs is
+// free and Refresh is the only thing that pays for a fetch.
+const EMAIL_TTL = 120_000;
+
+/** "Some One <a@b.c>" → "Some One"; a bare address stays as it is. */
+function emailFromLabel(raw) {
+  const m = (raw || "").match(/^\s*(.*?)\s*<([^>]+)>\s*$/);
+  if (!m) return (raw || "").trim() || "(unknown sender)";
+  const name = m[1].replace(/^["']|["']$/g, "").trim();
+  return name || m[2];
+}
+
+/** Clock for today, month and day for this year, and the year when older. */
+function fmtEmailDate(ms) {
+  if (!ms) return "";
+  const d = new Date(ms);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) {
+    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }
+  if (d.getFullYear() === now.getFullYear()) {
+    return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  }
+  return d.toLocaleDateString([], { month: "numeric", day: "numeric", year: "2-digit" });
+}
+
+function fmtEmailSize(bytes) {
+  if (!bytes) return "";
+  const units = ["B", "KB", "MB", "GB"];
+  let n = bytes, i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return `${n < 10 && i ? n.toFixed(1) : Math.round(n)} ${units[i]}`;
+}
+
+// A stranger's HTML, put on screen without letting it touch the app: sandboxed
+// to an opaque origin with no script permission, and a CSP inside the document
+// that blocks every remote fetch — tracking pixels included — until Show images
+// is pressed. allow-popups is there for one reason, so a clicked link can open
+// a tab; without allow-scripts nothing can open one on its own.
+//
+// White inside the frame, not the app's dark surface: these were all designed
+// against white, and forcing dark on them leaves half of them unreadable.
+function createEmailFrame(html, showImages) {
+  const imgSrc = showImages ? "img-src data: https: http:" : "img-src data:";
+  const doc = `<!doctype html><html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; ${imgSrc}; style-src 'unsafe-inline'; font-src data:">
+<meta name="referrer" content="no-referrer">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<base target="_blank">
+<style>
+  html, body { margin: 0; padding: 14px; background: #fff; color: #111;
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    overflow-wrap: anywhere; }
+  img, video, table, pre { max-width: 100%; }
+  img { height: auto; }
+  table { border-collapse: collapse; }
+</style></head><body>${html}</body></html>`;
+
+  const frame = document.createElement("iframe");
+  frame.className = "email-msg-frame";
+  frame.title = "Message body";
+  frame.setAttribute("sandbox", "allow-popups allow-popups-to-escape-sandbox");
+  frame.setAttribute("referrerpolicy", "no-referrer");
+  frame.srcdoc = doc;
+  return frame;
+}
+
+// One of these per account. Both panels carry the same markup under an
+// `email-<account>` id prefix, so the whole tab is this function twice.
+function createEmailTab({ tab, account }) {
+  const panelEl = document.getElementById(`tab-${tab}`);
+  const listEl = document.getElementById(`${tab}-list`);
+  const readerEl = document.getElementById(`${tab}-reader`);
+  const placeholderEl = document.getElementById(`${tab}-placeholder`);
+  const addressEl = document.getElementById(`${tab}-address`);
+  const countEl = document.getElementById(`${tab}-count`);
+  const filterEl = document.getElementById(`${tab}-filter`);
+  const refreshBtn = document.getElementById(`${tab}-refresh`);
+  const composeEl = document.getElementById(`${tab}-compose`);
+  const composeBtn = document.getElementById(`${tab}-compose-btn`);
+
+  let messages = [];
+  let fetchedAt = 0;
+  let staleNote = "";
+  let loading = false;
+  let openId = null;
+  // Sent mail never changes, so a body fetched once is good for the session.
+  const bodies = new Map();
+  // The message being replied to, so the send threads onto it. Null for a
+  // message composed from scratch.
+  let replyToId = null;
+  let sentTimer = null;
+  // Remote images are a privacy switch, not a performance one: an <img> pointing
+  // at the sender's server is how "opened at 9:04, from this IP" gets back to
+  // them. On by default, the way every mail client does it — the block is there
+  // for the message where it matters, and the choice sticks per account.
+  const imagesKey = `dash-email-images-${account}`;
+  let showImages = true;
+  try { showImages = localStorage.getItem(imagesKey) !== "0"; } catch { /* private mode */ }
+
+  function visibleMessages() {
+    const q = filterEl.value.trim().toLowerCase();
+    if (!q) return messages;
+    return messages.filter((m) =>
+      `${m.from} ${m.subject} ${m.snippet}`.toLowerCase().includes(q));
+  }
+
+  function renderRow(m) {
+    return `
+      <button class="email-item${m.unread ? " unread" : ""}${m.id === openId ? " active" : ""}"
+              type="button" data-id="${escapeHtml(m.id)}">
+        <span class="email-item-top">
+          <span class="email-item-dot${m.unread ? "" : " read"}"></span>
+          <span class="email-item-from">${escapeHtml(emailFromLabel(m.from))}</span>
+          <span class="email-item-date">${escapeHtml(fmtEmailDate(m.internalDate))}</span>
+        </span>
+        <span class="email-item-subject">${escapeHtml(m.subject || "(no subject)")}</span>
+        <span class="email-item-snippet">${escapeHtml(m.snippet || "")}</span>
+      </button>`;
+  }
+
+  function renderList() {
+    const rows = visibleMessages();
+    const unread = messages.filter((m) => m.unread).length;
+    const shown = rows.length === messages.length ? `${messages.length}` : `${rows.length}/${messages.length}`;
+    countEl.textContent = messages.length
+      ? [shown, unread ? `${unread} unread` : "", staleNote].filter(Boolean).join(" · ")
+      : "";
+    if (!rows.length) {
+      listEl.innerHTML = `<div class="empty">${messages.length ? "Nothing matches that." : "Inbox is empty."}</div>`;
+      return;
+    }
+    // innerHTML throws away the focused row, and with it the arrow keys — a
+    // background refresh or a read/unread flip would drop the keyboard back to
+    // the page. Put it on the open row again when it was in the list before.
+    const hadFocus = listEl.contains(document.activeElement);
+    listEl.innerHTML = rows.map(renderRow).join("");
+    if (hadFocus) focusRow(openId);
+  }
+
+  /** Move the keyboard onto a row without the browser scrolling past it. */
+  function focusRow(id) {
+    if (!id) return;
+    const btn = listEl.querySelector(`.email-item[data-id="${CSS.escape(id)}"]`);
+    if (!btn) return;
+    btn.focus({ preventScroll: true });
+    btn.scrollIntoView({ block: "nearest" });
+  }
+
+  /**
+   * Arrow keys walk the list the way a mail client does — the next message
+   * opens, rather than the pane scrolling under a message that stays open.
+   * Walks the filtered rows, since those are the ones on screen.
+   */
+  function moveSelection(delta) {
+    const rows = visibleMessages();
+    if (!rows.length) return;
+    const at = rows.findIndex((m) => m.id === openId);
+    // Nothing open yet: down starts at the top, up at the bottom.
+    const next = at === -1 ? (delta > 0 ? 0 : rows.length - 1) : at + delta;
+    if (next < 0 || next >= rows.length) return;
+    openMessage(rows[next].id);
+    focusRow(rows[next].id);
+  }
+
+  function markActive() {
+    for (const btn of listEl.querySelectorAll(".email-item")) {
+      btn.classList.toggle("active", btn.dataset.id === openId);
+    }
+  }
+
+  function renderMessage(msg) {
+    const meta = [
+      ["From", msg.from],
+      ["To", msg.to],
+      ["Cc", msg.cc],
+      ["Date", msg.internalDate ? new Date(msg.internalDate).toLocaleString() : msg.date],
+      // A header the sender left off shouldn't leave its label behind.
+    ].filter(([, v]) => v);
+    const attachments = (msg.attachments || []).length
+      ? `<div class="email-attachments">${msg.attachments.map((a) =>
+          `<span class="email-attachment">${escapeHtml(a.filename)}${a.size ? ` · ${fmtEmailSize(a.size)}` : ""}</span>`
+        ).join("")}</div>`
+      : "";
+    const html = (msg.html || "").trim();
+    const imagesBtn = html
+      ? `<button class="btn email-images-btn" type="button" title="${showImages
+          ? "Remote images load, which tells the sender you opened this"
+          : "Remote images are blocked, so senders can't see that you opened this"}">${
+          showImages ? "Block images" : "Show images"}</button>`
+      : "";
+    // Only for mail that actually carries a List-Unsubscribe header — no button
+    // on a message from a person.
+    const unsubBtn = msg.unsubscribe
+      ? `<button class="btn email-unsub-btn" type="button" title="${
+          msg.unsubscribe.oneClick ? "One-click unsubscribe, handled here"
+          : msg.unsubscribe.url ? "Opens the sender's unsubscribe page"
+          : "Sends an unsubscribe email to the sender"}">Unsubscribe</button>`
+      : "";
+
+    readerEl.innerHTML = `
+      <button class="email-back" type="button">← Inbox</button>
+      <h3 class="email-msg-subject">${escapeHtml(msg.subject || "(no subject)")}</h3>
+      <div class="email-msg-meta">${meta.map(([k, v]) =>
+        `<span><b>${k}</b> ${escapeHtml(v || "")}</span>`).join("")}</div>
+      <div class="email-msg-tools">
+        <button class="btn email-reply-btn" type="button">Reply</button>
+        <button class="btn email-unread-btn" type="button" title="Put it back in the inbox unread">Mark unread</button>${imagesBtn}${unsubBtn}${attachments}</div>
+      ${html ? "" : `<pre class="email-msg-text">${escapeHtml(msg.body || msg.snippet || "(empty message)")}</pre>`}
+    `;
+    if (html) readerEl.appendChild(createEmailFrame(html, showImages));
+    readerEl.scrollIntoView({ block: "nearest" });
+  }
+
+  function closeMessage() {
+    openId = null;
+    readerEl.hidden = true;
+    readerEl.innerHTML = "";
+    placeholderEl.hidden = false;
+    panelEl.classList.remove("email-reading");
+    markActive();
+  }
+
+  /**
+   * Flip the UNREAD label, locally first so the row responds to the click and
+   * not to the round trip. A failure puts the old state back — the label on
+   * Gmail's side didn't change, and the list shouldn't claim it did.
+   */
+  async function setRead(id, read) {
+    const row = messages.find((m) => m.id === id);
+    const was = row?.unread;
+    if (row) { row.unread = !read; renderList(); }
+    const body = bodies.get(id);
+    if (body) body.unread = !read;
+    try {
+      const res = await fetch("/api/email/mark", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ account, id, read }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch {
+      if (row) { row.unread = was; renderList(); }
+      if (body) body.unread = was;
+    }
+  }
+
+  async function openMessage(id) {
+    openId = id;
+    markActive();
+    panelEl.classList.add("email-reading");
+    placeholderEl.hidden = true;
+    readerEl.hidden = false;
+    // Opening it is reading it. Fired here rather than after the body arrives
+    // so the row clears immediately, and only when there's something to clear.
+    if (messages.find((m) => m.id === id)?.unread) setRead(id, true);
+
+    const cached = bodies.get(id);
+    if (cached) { renderMessage(cached); return; }
+
+    readerEl.innerHTML = `<button class="email-back" type="button">← Inbox</button><div class="empty">Loading…</div>`;
+    try {
+      const res = await fetch(
+        `/api/email/message?account=${encodeURIComponent(account)}&id=${encodeURIComponent(id)}`,
+        { cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      bodies.set(id, data.message);
+      // Another row may have been clicked while this was in flight.
+      if (openId === id) renderMessage(data.message);
+    } catch (err) {
+      if (openId !== id) return;
+      readerEl.innerHTML = `<button class="email-back" type="button">← Inbox</button>
+        <div class="empty">Couldn't open that message: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  async function load({ force = false } = {}) {
+    if (loading) return;
+    if (!force && messages.length && Date.now() - fetchedAt < EMAIL_TTL) return;
+    loading = true;
+    refreshBtn.disabled = true;
+    if (!messages.length) listEl.innerHTML = `<div class="empty">Loading…</div>`;
+    try {
+      const res = await fetch(`/api/email?account=${encodeURIComponent(account)}${force ? "&refresh=1" : ""}`,
+        { cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      messages = data.messages || [];
+      fetchedAt = Date.now();
+      // The server falls back to its last good copy when Gmail is unreachable,
+      // and says so — worth showing rather than pretending it's current.
+      staleNote = data.stale ? "last known" : "";
+      addressEl.textContent = data.address || "";
+      renderList();
+    } catch (err) {
+      if (!messages.length) {
+        listEl.innerHTML = `<div class="empty">Failed to load: ${escapeHtml(err.message)}</div>`;
+      }
+    } finally {
+      loading = false;
+      refreshBtn.disabled = false;
+    }
+  }
+
+  // ── Compose ──
+  // Plain text only, which is what the send path builds. Values are assigned
+  // rather than interpolated into the markup — a quoted reply is full of the
+  // characters that would otherwise need escaping twice.
+  const composeField = (name) => composeEl.querySelector(`[data-field="${name}"]`);
+
+  function openCompose({ to = "", cc = "", subject = "", body = "", replyToMessageId = null, title = "New message" } = {}) {
+    clearTimeout(sentTimer);
+    replyToId = replyToMessageId;
+    composeEl.hidden = false;
+    composeEl.innerHTML = `
+      <div class="email-compose-head">
+        <span class="email-compose-title">${escapeHtml(title)}</span>
+        <span class="email-compose-from">from ${escapeHtml(addressEl.textContent || account)}</span>
+        <button class="btn email-ai-btn" type="button">Ask Dash</button>
+        <button class="email-compose-close" type="button" aria-label="Discard">×</button>
+      </div>
+      <div class="email-ai" hidden>
+        <textarea class="email-ai-text" rows="2"
+          placeholder="Tell Dash what to write — e.g. decline politely and suggest next Tuesday, or tighten this up"></textarea>
+        <div class="email-ai-actions">
+          <button class="btn primary email-ai-submit" type="button">Draft it</button>
+          <button class="btn email-ai-undo" type="button" hidden>Undo</button>
+          <span class="email-ai-status"></span>
+        </div>
+      </div>
+      <input class="email-compose-input" data-field="to" type="text" placeholder="To" autocomplete="off" />
+      <input class="email-compose-input" data-field="cc" type="text" placeholder="Cc (optional)" autocomplete="off" />
+      <input class="email-compose-input" data-field="subject" type="text" placeholder="Subject" autocomplete="off" />
+      <textarea class="email-compose-body" data-field="body" rows="12" placeholder="Write your message…"></textarea>
+      <div class="email-compose-actions">
+        <button class="btn primary email-compose-send" type="button">Send</button>
+        <button class="btn email-compose-cancel" type="button">Cancel</button>
+        <span class="email-compose-status"></span>
+      </div>`;
+    composeField("to").value = to;
+    composeField("cc").value = cc;
+    composeField("subject").value = subject;
+    composeField("body").value = body;
+    composeEl.scrollIntoView({ block: "nearest" });
+    // A reply already knows who and what it is — the cursor belongs above the
+    // quoted text, not in the To field.
+    if (to) {
+      composeField("body").focus();
+      composeField("body").setSelectionRange(0, 0);
+    } else {
+      composeField("to").focus();
+    }
+  }
+
+  function closeCompose() {
+    clearTimeout(sentTimer);
+    replyToId = null;
+    undoDraft = null;
+    composeEl.hidden = true;
+    composeEl.innerHTML = "";
+  }
+
+  function startReply(msg) {
+    const subject = /^\s*re:/i.test(msg.subject || "")
+      ? msg.subject
+      : `Re: ${msg.subject || ""}`.trim();
+    const when = msg.internalDate ? new Date(msg.internalDate).toLocaleString() : msg.date;
+    // `text` is the real plain-text part — HTML-only mail has none, and quotes
+    // its snippet rather than dumping markup into the reply.
+    const source = (msg.text || "").trim() || msg.snippet || "";
+    const quoted = source.slice(0, 4000).split("\n").map((l) => `> ${l}`).join("\n");
+    openCompose({
+      title: "Reply",
+      // Reply-To is the address the sender asked to be answered on, when they
+      // set one; otherwise it's whoever sent it.
+      to: msg.replyTo || msg.from,
+      subject,
+      replyToMessageId: msg.id,
+      body: `\n\nOn ${when}, ${emailFromLabel(msg.from)} wrote:\n${quoted}\n`,
+    });
+  }
+
+  /**
+   * The confirm names where it's going — the host for a URL, the address for a
+   * mailto — because that destination came out of the email itself, and the
+   * sender chose it. The URL is never sent from here; the server reads it back
+   * off the message.
+   */
+  async function unsubscribe(btn) {
+    const msg = bodies.get(openId);
+    if (!msg?.unsubscribe) return;
+    const { url, mailto, oneClick } = msg.unsubscribe;
+    const where = url ? new URL(url).host : (mailto || "").replace(/^mailto:/i, "").split("?")[0];
+    const what = oneClick
+      ? `Unsubscribe from this sender?\n\nOne-click request to ${where}.`
+      : url
+        ? `Open the unsubscribe page for ${where}?\n\nIt opens in a new tab — you finish it there.`
+        : `Send an unsubscribe email to ${where}?`;
+    if (!confirm(what)) return;
+
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Unsubscribing…";
+    try {
+      const res = await fetch("/api/email/unsubscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ account, id: openId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      if (data.action === "open") {
+        // Popup blockers only allow this because it's inside the click.
+        window.open(data.url, "_blank", "noopener,noreferrer");
+        btn.textContent = "Opened";
+      } else {
+        btn.textContent = data.action === "mailto" ? "Unsubscribe sent" : "Unsubscribed";
+      }
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = label;
+      alert(`Unsubscribe failed: ${err.message}`);
+    }
+  }
+
+  // ── Ask Dash ──
+  // Drafts into the form rather than into a chat panel: the result is the email,
+  // so it belongs in the fields Steve is about to send. One level of undo, since
+  // it overwrites what he'd already typed.
+  let undoDraft = null;
+
+  async function askDash() {
+    const aiEl = composeEl.querySelector(".email-ai");
+    const textEl = aiEl.querySelector(".email-ai-text");
+    const statusEl = aiEl.querySelector(".email-ai-status");
+    const submitBtn = aiEl.querySelector(".email-ai-submit");
+    const undoBtn = aiEl.querySelector(".email-ai-undo");
+    const question = textEl.value.trim();
+    if (!question) { textEl.focus(); return; }
+
+    submitBtn.disabled = true;
+    statusEl.textContent = "Thinking…";
+    try {
+      const res = await fetch("/api/email/assist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          account,
+          text: question,
+          replyToMessageId: replyToId || "",
+          draft: {
+            to: composeField("to").value,
+            cc: composeField("cc").value,
+            subject: composeField("subject").value,
+            body: composeField("body").value,
+          },
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+      undoDraft = {
+        subject: composeField("subject").value,
+        body: composeField("body").value,
+      };
+      // An empty subject back means "leave it alone" — don't wipe a good one.
+      if (data.subject) composeField("subject").value = data.subject;
+      if (data.body) composeField("body").value = data.body;
+      undoBtn.hidden = false;
+      statusEl.textContent = data.note || "Drafted — read it before sending.";
+    } catch (err) {
+      statusEl.textContent = `Failed: ${err.message}`;
+    } finally {
+      submitBtn.disabled = false;
+    }
+  }
+
+  async function sendCompose() {
+    const statusEl = composeEl.querySelector(".email-compose-status");
+    const sendBtn = composeEl.querySelector(".email-compose-send");
+    const to = composeField("to").value.trim();
+    const subject = composeField("subject").value.trim();
+    if (!to) {
+      statusEl.textContent = "Needs a recipient.";
+      composeField("to").focus();
+      return;
+    }
+    // The only thing on this page that can't be taken back, so it asks.
+    if (!confirm(`Send to ${to}?\n\nSubject: ${subject || "(none)"}`)) return;
+
+    sendBtn.disabled = true;
+    statusEl.textContent = "Sending…";
+    try {
+      const res = await fetch("/api/email/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          account,
+          to,
+          cc: composeField("cc").value.trim(),
+          subject,
+          body: composeField("body").value,
+          replyToMessageId: replyToId,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      replyToId = null;
+      composeEl.innerHTML = `<div class="email-compose-sent">Sent to ${escapeHtml(to)}.</div>`;
+      sentTimer = setTimeout(closeCompose, 5000);
+    } catch (err) {
+      statusEl.textContent = `Failed: ${err.message}`;
+      sendBtn.disabled = false;
+    }
+  }
+
+  listEl.addEventListener("click", (e) => {
+    const btn = e.target.closest(".email-item");
+    if (!btn) return;
+    openMessage(btn.dataset.id);
+    // Safari doesn't focus a button on click, so the arrows would do nothing
+    // until you'd tabbed into the list. Clicking a row is picking it — take
+    // the keyboard with it.
+    focusRow(btn.dataset.id);
+  });
+  // Only while the list has the keyboard — arrows inside the reader, the filter
+  // box or the compose form still mean what they always did.
+  listEl.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    e.preventDefault();
+    moveSelection(e.key === "ArrowDown" ? 1 : -1);
+  });
+  // Delegated so the Back button works while a body is still loading, too.
+  readerEl.addEventListener("click", (e) => {
+    if (e.target.closest(".email-back")) { closeMessage(); return; }
+    if (e.target.closest(".email-reply-btn")) {
+      const msg = bodies.get(openId);
+      if (msg) startReply(msg);
+      return;
+    }
+    // Marking unread closes the message, the way every mail client does it —
+    // and it sidesteps the obvious trap, where a message left open and unread
+    // gets marked read again the moment you come back to it.
+    if (e.target.closest(".email-unread-btn")) {
+      setRead(openId, false);
+      closeMessage();
+      return;
+    }
+    if (e.target.closest(".email-unsub-btn")) {
+      unsubscribe(e.target.closest(".email-unsub-btn"));
+      return;
+    }
+    if (e.target.closest(".email-images-btn")) {
+      showImages = !showImages;
+      try { localStorage.setItem(imagesKey, showImages ? "1" : "0"); } catch { /* private mode */ }
+      const msg = bodies.get(openId);
+      if (msg) renderMessage(msg);
+    }
+  });
+  composeEl.addEventListener("click", (e) => {
+    if (e.target.closest(".email-compose-send")) { sendCompose(); return; }
+    if (e.target.closest(".email-compose-cancel") || e.target.closest(".email-compose-close")) { closeCompose(); return; }
+    if (e.target.closest(".email-ai-btn")) {
+      const aiEl = composeEl.querySelector(".email-ai");
+      aiEl.hidden = !aiEl.hidden;
+      if (!aiEl.hidden) aiEl.querySelector(".email-ai-text").focus();
+      return;
+    }
+    if (e.target.closest(".email-ai-submit")) { askDash(); return; }
+    if (e.target.closest(".email-ai-undo")) {
+      if (!undoDraft) return;
+      composeField("subject").value = undoDraft.subject;
+      composeField("body").value = undoDraft.body;
+      undoDraft = null;
+      e.target.closest(".email-ai-undo").hidden = true;
+      composeEl.querySelector(".email-ai-status").textContent = "Put back.";
+    }
+  });
+  // Cmd/Ctrl+Enter submits the instruction, the way the textarea invites.
+  composeEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && e.target.closest(".email-ai-text")) {
+      e.preventDefault();
+      askDash();
+    }
+  });
+  composeBtn.addEventListener("click", () => openCompose());
+  filterEl.addEventListener("input", renderList);
+  refreshBtn.addEventListener("click", () => load({ force: true }));
+
+  return { load };
+}
+
+const emailTabs = {
+  "email-personal": createEmailTab({ tab: "email-personal", account: "personal" }),
+  "email-professional": createEmailTab({ tab: "email-professional", account: "professional" }),
+  // Dash's own inbox (dashbot.assistant@gmail.com). Mostly already read — the
+  // inbox-poll job forwards new mail to Telegram and marks it read behind it.
+  "email-dashbot": createEmailTab({ tab: "email-dashbot", account: "dashbot" }),
+};
+
+// ── Timeline (day planner) ────────────────────────────
+const timelineListEl = document.getElementById("timeline-list");
+const timelineDateInput = document.getElementById("timeline-date-input");
+const timelinePrevBtn = document.getElementById("timeline-prev-btn");
+const timelineNextBtn = document.getElementById("timeline-next-btn");
+const timelineTodayBtn = document.getElementById("timeline-today-btn");
+const timelineAddBtn = document.getElementById("timeline-add-btn");
+const timelineSaveBtn = document.getElementById("timeline-save-btn");
+const timelineCancelBtn = document.getElementById("timeline-cancel-btn");
+const timelineCopyBtn = document.getElementById("timeline-copy-btn");
+const timelineCalendarBtn = document.getElementById("timeline-calendar-btn");
+const timelineSyncWeekBtn = document.getElementById("timeline-sync-week-btn");
+const timelineAllDayEl = document.getElementById("timeline-allday");
+const timelineCopyPanel = document.getElementById("timeline-copy-panel");
+const timelineCopyDateInput = document.getElementById("timeline-copy-date-input");
+const timelineCopyConfirmBtn = document.getElementById("timeline-copy-confirm-btn");
+const timelineCopyCancelBtn = document.getElementById("timeline-copy-cancel-btn");
+const timelineCopyMsg = document.getElementById("timeline-copy-msg");
+const timelineVizTrackEl = document.getElementById("timeline-viz-track");
+const timelineVizAboveEl = document.getElementById("timeline-viz-above");
+const timelineVizBelowEl = document.getElementById("timeline-viz-below");
+const timelineVizTicksEl = document.getElementById("timeline-viz-ticks");
+const timelineVizEl = document.getElementById("timeline-viz");
+const timelineOrientationBtn = document.getElementById("timeline-orientation-btn");
+const TIMELINE_VIZ_COLORS = ["var(--accent)", "var(--green)", "var(--amber)", "var(--purple)"];
+
+let timelineBlocks = [];
+let timelineAllDay = [];
+let timelineSavedSnapshot = [];
+let timelineLoadedDate = null;
+let timelineDirty = false;
+let timelineRenderTimer = null;
+let timelineRenderTimerRowIdx = null;
+// Horizontal on every screen size, phones included — the toggle is there when a
+// day is dense enough to want the vertical read. Review inherits this default.
+let timelineOrientation = localStorage.getItem("dash-timeline-orientation") || "horizontal";
+
+// Drawn rather than typed: the ↕/↔ characters fall back to a system font on
+// iOS that draws them small and low in the em box, so they never matched the
+// desktop glyph. An SVG is the same size and position everywhere.
+const ORIENTATION_SVG = {
+  vertical: '<path d="M12 4.5v15M8.5 8 12 4.5 15.5 8M8.5 16 12 19.5 15.5 16"/>',
+  horizontal: '<path d="M4.5 12h15M8 8.5 4.5 12 8 15.5M16 8.5 19.5 12 16 15.5"/>',
+};
+
+function orientationToggleHtml(orientation) {
+  // The button offers the orientation you aren't in.
+  const next = orientation === "horizontal" ? "vertical" : "horizontal";
+  const word = next === "vertical" ? "Vertical" : "Horizontal";
+  return `<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ORIENTATION_SVG[next]}</svg><span class="btn-label">${word}</span>`;
+}
+
+function applyTimelineOrientation() {
+  timelineVizEl.dataset.orientation = timelineOrientation;
+  const next = timelineOrientation === "horizontal" ? "vertical" : "horizontal";
+  timelineOrientationBtn.innerHTML = orientationToggleHtml(timelineOrientation);
+  timelineOrientationBtn.setAttribute("aria-label", `Switch to ${next} planner view`);
+}
+applyTimelineOrientation();
+
+timelineOrientationBtn.addEventListener("click", () => {
+  timelineOrientation = timelineOrientation === "horizontal" ? "vertical" : "horizontal";
+  localStorage.setItem("dash-timeline-orientation", timelineOrientation);
+  applyTimelineOrientation();
+  renderTimelineViz();
+});
+
+function todayLocalISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function isoWithOffset(iso, days) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(y, m - 1, d + days);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}
+
+function refreshTimelineButtons() {
+  const hasInvalid = !!timelineListEl.querySelector(".invalid");
+  timelineSaveBtn.disabled = !timelineDirty || hasInvalid;
+  timelineCancelBtn.disabled = !timelineDirty;
+}
+
+function setTimelineDirty(dirty) {
+  timelineDirty = dirty;
+  refreshTimelineButtons();
+}
+
+function timelineDurationLabel(start, end) {
+  const [sh, sm] = start.split(":").map(Number);
+  const [eh, em] = end.split(":").map(Number);
+  let mins = (eh * 60 + em) - (sh * 60 + sm);
+  if (mins < 0) mins += 24 * 60;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
+function renderTimelineBlock(b, idx) {
+  // Calendar-owned rows are read-only: the hourly sync rewrites them from the
+  // calendar, so any edit made here would silently disappear. Edit the event in
+  // the calendar instead.
+  const fromCal = b.source === "calendar";
+  const ro = fromCal ? " readonly disabled" : "";
+  const calTip = "From your calendar — edit it in the calendar, not here";
+  return `
+    <div class="timeline-block${fromCal ? " from-calendar" : ""}" data-idx="${idx}"${fromCal ? ` title="${attrEscape(calTip)}"` : ""}>
+      <div class="timeline-block-time">
+        <input type="time" class="timeline-input" data-field="start" value="${attrEscape(b.start)}"${ro} />
+        <span class="timeline-time-sep">–</span>
+        <input type="time" class="timeline-input" data-field="end" value="${attrEscape(b.end)}"${ro} />
+        <span class="timeline-duration">${escapeHtml(timelineDurationLabel(b.start, b.end))}</span>
+      </div>
+      <input type="text" class="timeline-input timeline-title" data-field="title" placeholder="What's happening?" value="${attrEscape(b.title || "")}"${ro} />
+      ${fromCal ? `<span class="timeline-cal-badge" title="${attrEscape(calTip)}">cal</span>` : ""}
+      ${fromCal
+        ? `<button class="timeline-delete" disabled aria-label="Calendar events can't be deleted here" title="${attrEscape(calTip)}">×</button>`
+        : `<button class="timeline-delete" data-idx="${idx}" aria-label="Delete block">×</button>`}
+    </div>
+  `;
+}
+
+function renderTimelineAllDay() {
+  if (!timelineAllDayEl) return;
+  if (timelineAllDay.length === 0) {
+    timelineAllDayEl.hidden = true;
+    timelineAllDayEl.innerHTML = "";
+    return;
+  }
+  timelineAllDayEl.hidden = false;
+  timelineAllDayEl.innerHTML =
+    `<span class="timeline-allday-label">All-day</span>` +
+    timelineAllDay.map(() => `<span class="timeline-allday-pill"></span>`).join("");
+  // Titles come from the calendar — set as text so they can't inject markup.
+  const pills = timelineAllDayEl.querySelectorAll(".timeline-allday-pill");
+  timelineAllDay.forEach((a, i) => {
+    if (pills[i]) pills[i].textContent = a.title || "(untitled)";
+  });
+}
+
+function fmtTimelineClock(hhmm) {
+  const [h, m] = hhmm.split(":").map(Number);
+  const period = h < 12 ? "a" : "p";
+  let h12 = h % 12;
+  if (h12 === 0) h12 = 12;
+  return m === 0 ? `${h12}${period}` : `${h12}:${String(m).padStart(2, "0")}${period}`;
+}
+
+// The visual is a window onto the blocks actually scheduled that day, not the
+// full 24h — it grows/shrinks to fit the earliest start and latest end
+// (rounded out to the hour), falling back to a default workday window when
+// there are no blocks. The editor below still accepts any time.
+const TIMELINE_VIZ_DEFAULT_START_MIN = 5 * 60;
+const TIMELINE_VIZ_DEFAULT_END_MIN = 21 * 60;
+const TIMELINE_VIZ_MIN_SPAN_MIN = 3 * 60;
+// Breathing room kept at both ends of the chart, before hour snapping.
+const TIMELINE_VIZ_EDGE_PAD_MIN = 15;
+// Must match the vertical track/label-column height (102rem) in styles.css.
+const TIMELINE_VIZ_VERTICAL_TRACK_PX = 1632;
+const TIMELINE_VIZ_LABEL_MIN_GAP_PX = 44;
+
+let TIMELINE_VIZ_START_MIN = TIMELINE_VIZ_DEFAULT_START_MIN;
+let TIMELINE_VIZ_END_MIN = TIMELINE_VIZ_DEFAULT_END_MIN;
+let TIMELINE_VIZ_SPAN_MIN = TIMELINE_VIZ_END_MIN - TIMELINE_VIZ_START_MIN;
+
+function computeTimelineVizRange(blocks) {
+  if (!blocks.length) {
+    return { start: TIMELINE_VIZ_DEFAULT_START_MIN, end: TIMELINE_VIZ_DEFAULT_END_MIN };
+  }
+  let min = Infinity;
+  let max = -Infinity;
+  blocks.forEach((b) => {
+    const s = timeToMinutes(b.start);
+    const e = Math.max(timeToMinutes(b.end), s + 1);
+    if (s < min) min = s;
+    if (e > max) max = e;
+  });
+  // Pad before snapping to the hour so the first and last block are never flush
+  // against the edge. That margin is what gives drags room to move a block
+  // outward — earned statically here rather than by expanding on pointerdown,
+  // which made the whole chart jump the moment you touched a block.
+  let start = Math.floor((min - TIMELINE_VIZ_EDGE_PAD_MIN) / 60) * 60;
+  let end = Math.ceil((max + TIMELINE_VIZ_EDGE_PAD_MIN) / 60) * 60;
+  if (end - start < TIMELINE_VIZ_MIN_SPAN_MIN) {
+    const extra = TIMELINE_VIZ_MIN_SPAN_MIN - (end - start);
+    start -= Math.ceil(extra / 2);
+    end += Math.floor(extra / 2);
+  }
+  start = Math.max(start, 0);
+  end = Math.min(end, 24 * 60);
+  return { start, end };
+}
+
+function timelineVizPct(min) {
+  const clamped = Math.min(Math.max(min, TIMELINE_VIZ_START_MIN), TIMELINE_VIZ_END_MIN);
+  return ((clamped - TIMELINE_VIZ_START_MIN) / TIMELINE_VIZ_SPAN_MIN) * 100;
+}
+
+// ── Dragging blocks in the visualization ────────────────
+// Only manual blocks move; calendar-owned ones are re-synced hourly so any
+// edit here would be silently reverted.
+const TIMELINE_DRAG_SNAP_MIN = 5;
+const TIMELINE_DRAG_MIN_DURATION = 5;
+
+let timelineDrag = null;
+let timelineVizFrozenRange = null;
+let timelineDragFrame = null;
+
+function minutesToTime(min) {
+  const m = Math.round(min);
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+}
+
+function snapDragMinutes(min) {
+  return Math.round(min / TIMELINE_DRAG_SNAP_MIN) * TIMELINE_DRAG_SNAP_MIN;
+}
+
+function clampNum(v, lo, hi) {
+  return Math.min(Math.max(v, lo), hi);
+}
+
+/** Pointer position → minutes on whichever axis the current orientation uses. */
+function timelineVizPointerMinutes(e) {
+  const rect = timelineVizTrackEl.getBoundingClientRect();
+  const vertical = timelineOrientation === "vertical";
+  const size = vertical ? rect.height : rect.width;
+  if (!size) return TIMELINE_VIZ_START_MIN;
+  const offset = vertical ? e.clientY - rect.top : e.clientX - rect.left;
+  return TIMELINE_VIZ_START_MIN + (offset / size) * TIMELINE_VIZ_SPAN_MIN;
+}
+
+/** Keep the editor row below in step with the bar being dragged. */
+function syncTimelineRowInputs(block) {
+  const idx = timelineBlocks.indexOf(block);
+  const row = timelineListEl.querySelector(`.timeline-block[data-idx="${idx}"]`);
+  if (!row) return;
+  const startInput = row.querySelector('[data-field="start"]');
+  const endInput = row.querySelector('[data-field="end"]');
+  if (startInput) startInput.value = block.start;
+  if (endInput) endInput.value = block.end;
+  const dur = row.querySelector(".timeline-duration");
+  if (dur) dur.textContent = timelineDurationLabel(block.start, block.end);
+}
+
+function scheduleTimelineDragFrame(block) {
+  if (timelineDragFrame) return;
+  timelineDragFrame = requestAnimationFrame(() => {
+    timelineDragFrame = null;
+    renderTimelineViz();
+    syncTimelineRowInputs(block);
+  });
+}
+
+function onTimelineVizPointerDown(e) {
+  if (e.button != null && e.button !== 0) return;
+  const seg = e.target.closest(".timeline-viz-segment");
+  if (!seg || !seg.dataset.manual) return;
+  const block = timelineBlocks.find((b) => b.id === seg.dataset.blockId);
+  if (!block) return;
+
+  const edge = e.target.closest(".timeline-viz-handle")?.dataset.edge;
+  const mode = edge === "start" ? "resize-start" : edge === "end" ? "resize-end" : "move";
+
+  // Pin the axis exactly as it is. Recomputing it mid-drag would rescale under
+  // the cursor; changing it *here* would make the chart jump on every click.
+  // The room to drag outward comes from TIMELINE_VIZ_EDGE_PAD_MIN instead.
+  timelineVizFrozenRange = { start: TIMELINE_VIZ_START_MIN, end: TIMELINE_VIZ_END_MIN };
+
+  timelineDrag = {
+    id: block.id,
+    mode,
+    grabMin: timelineVizPointerMinutes(e),
+    origStart: timeToMinutes(block.start),
+    origEnd: timeToMinutes(block.end),
+    moved: false,
+  };
+  // Capture on the container rather than the bar — the bar is destroyed on every
+  // re-render, which would drop the capture mid-drag.
+  try { timelineVizEl.setPointerCapture(e.pointerId); } catch {}
+  timelineVizEl.classList.add("dragging");
+  e.preventDefault();
+}
+
+function onTimelineVizPointerMove(e) {
+  if (!timelineDrag) return;
+  const block = timelineBlocks.find((b) => b.id === timelineDrag.id);
+  if (!block) return;
+
+  const delta = timelineVizPointerMinutes(e) - timelineDrag.grabMin;
+  const winStart = TIMELINE_VIZ_START_MIN;
+  const winEnd = TIMELINE_VIZ_END_MIN;
+  let start = timelineDrag.origStart;
+  let end = timelineDrag.origEnd;
+
+  if (timelineDrag.mode === "move") {
+    const duration = end - start;
+    start = clampNum(snapDragMinutes(timelineDrag.origStart + delta), winStart, winEnd - duration);
+    end = start + duration;
+  } else if (timelineDrag.mode === "resize-start") {
+    start = clampNum(snapDragMinutes(timelineDrag.origStart + delta), winStart, end - TIMELINE_DRAG_MIN_DURATION);
+  } else {
+    end = clampNum(snapDragMinutes(timelineDrag.origEnd + delta), start + TIMELINE_DRAG_MIN_DURATION, winEnd);
+  }
+
+  const nextStart = minutesToTime(start);
+  const nextEnd = minutesToTime(end);
+  if (nextStart === block.start && nextEnd === block.end) return;
+  block.start = nextStart;
+  block.end = nextEnd;
+  timelineDrag.moved = true;
+  scheduleTimelineDragFrame(block);
+}
+
+function onTimelineVizPointerUp(e) {
+  if (!timelineDrag) return;
+  const moved = timelineDrag.moved;
+  timelineDrag = null;
+  timelineVizFrozenRange = null;
+  if (timelineDragFrame) {
+    cancelAnimationFrame(timelineDragFrame);
+    timelineDragFrame = null;
+  }
+  timelineVizEl.classList.remove("dragging");
+  try { timelineVizEl.releasePointerCapture(e.pointerId); } catch {}
+  if (moved) {
+    setTimelineDirty(true);
+    renderTimeline();
+  } else {
+    renderTimelineViz();
+  }
+}
+
+if (timelineVizTrackEl) {
+  timelineVizTrackEl.addEventListener("pointerdown", onTimelineVizPointerDown);
+  timelineVizEl.addEventListener("pointermove", onTimelineVizPointerMove);
+  timelineVizEl.addEventListener("pointerup", onTimelineVizPointerUp);
+  timelineVizEl.addEventListener("pointercancel", onTimelineVizPointerUp);
+}
+
+/**
+ * Draw the day chart — segments on the track plus the cascaded labels around
+ * it. Shared by the planner and the Review tab: `interactive` is what adds the
+ * planner's drag affordances, so Review renders the identical chart with no
+ * handles and no drag classes.
+ */
+function renderDayViz({ blocks, orientation, range, els, interactive }) {
+  const vertical = orientation === "vertical";
+  const sorted = [...blocks].sort((a, b) => a.start.localeCompare(b.start));
+  const spanMin = range.end - range.start;
+  const pct = (min) => ((Math.min(Math.max(min, range.start), range.end) - range.start) / spanMin) * 100;
+
+  renderVizTicks(els.ticksEl, range);
+
+  els.trackEl.innerHTML = sorted.map((b, i) => {
+    const startMin = timeToMinutes(b.start);
+    const endMin = Math.max(timeToMinutes(b.end), startMin + 1);
+    if (endMin <= range.start || startMin >= range.end) return "";
+    const from = pct(startMin);
+    const span = Math.max(pct(endMin) - from, 0.3);
+    const color = TIMELINE_VIZ_COLORS[i % TIMELINE_VIZ_COLORS.length];
+    const title = b.title || "Untitled";
+    const posStyle = vertical ? `top:${from}%;height:${span}%` : `left:${from}%;width:${span}%`;
+    // Calendar-owned blocks aren't draggable — the next sync would undo it.
+    const manual = interactive && b.source !== "calendar";
+    const hint = manual ? " · drag to move · drag an edge to resize" : b.source === "calendar" ? " · from calendar" : "";
+    const handles = manual
+      ? `<span class="timeline-viz-handle" data-edge="start"></span><span class="timeline-viz-handle" data-edge="end"></span>`
+      : "";
+    return `<div class="timeline-viz-segment${manual ? " draggable" : ""}"${manual ? ' data-manual="1"' : ""} data-block-id="${attrEscape(b.id)}" style="${posStyle};background:${color}" title="${attrEscape(`${title} · ${fmtTimelineClock(b.start)}–${fmtTimelineClock(b.end)}${hint}`)}">${handles}</div>`;
+  }).join("");
+
+  const aboveHtml = [];
+  const belowHtml = [];
+
+  if (vertical) {
+    // Dense clusters (several blocks close in time) would otherwise overlap
+    // when placed at their exact time position, so the label boxes get
+    // cascaded apart while a separate dot + riser line keeps the true time
+    // marked on the track.
+    const items = [];
+    sorted.forEach((b, i) => {
+      const startMin = timeToMinutes(b.start);
+      const endMin = Math.max(timeToMinutes(b.end), startMin + 1);
+      if (endMin <= range.start || startMin >= range.end) return;
+      const anchorPct = (pct(startMin) + pct(endMin)) / 2;
+      items.push({ b, anchorPct, color: TIMELINE_VIZ_COLORS[i % TIMELINE_VIZ_COLORS.length] });
+    });
+    let cursorPx = -Infinity;
+    items.forEach(({ b, anchorPct, color }) => {
+      const anchorPx = (anchorPct / 100) * TIMELINE_VIZ_VERTICAL_TRACK_PX;
+      const displayPx = Math.max(anchorPx, cursorPx + TIMELINE_VIZ_LABEL_MIN_GAP_PX);
+      cursorPx = displayPx;
+      const displayPct = (displayPx / TIMELINE_VIZ_VERTICAL_TRACK_PX) * 100;
+      const textGroup = `<span class="timeline-viz-label-text"><span class="timeline-viz-label-box">${escapeHtml(b.title || "Untitled")}</span><span class="timeline-viz-label-time">${escapeHtml(fmtTimelineClock(b.start))}–${escapeHtml(fmtTimelineClock(b.end))}</span></span>`;
+      const stub = `<span class="timeline-viz-connector" style="background:${color}"></span>`;
+      aboveHtml.push(`<div class="timeline-viz-anchor-dot" style="top:${anchorPct}%;background:${color}"></div>`);
+      const riserTop = Math.min(anchorPct, displayPct);
+      const riserHeight = Math.abs(displayPct - anchorPct);
+      if (riserHeight > 0.05) {
+        aboveHtml.push(`<div class="timeline-viz-riser" style="top:${riserTop}%;height:${riserHeight}%;background:${color}"></div>`);
+      }
+      aboveHtml.push(`<div class="timeline-viz-label" data-block-id="${attrEscape(b.id)}" style="top:${displayPct}%">${stub}${textGroup}</div>`);
+    });
+  } else {
+    sorted.forEach((b, i) => {
+      const startMin = timeToMinutes(b.start);
+      const endMin = Math.max(timeToMinutes(b.end), startMin + 1);
+      if (endMin <= range.start || startMin >= range.end) return;
+      const center = (pct(startMin) + pct(endMin)) / 2;
+      const color = TIMELINE_VIZ_COLORS[i % TIMELINE_VIZ_COLORS.length];
+      const textGroup = `<span class="timeline-viz-label-text"><span class="timeline-viz-label-box">${escapeHtml(b.title || "Untitled")}</span><span class="timeline-viz-label-time">${escapeHtml(fmtTimelineClock(b.start))}–${escapeHtml(fmtTimelineClock(b.end))}</span></span>`;
+      const connector = `<span class="timeline-viz-connector" style="background:${color}"></span>`;
+      const dot = `<span class="timeline-viz-dot" style="background:${color}"></span>`;
+      const html = i % 2 === 0
+        ? `<div class="timeline-viz-label" data-block-id="${attrEscape(b.id)}" style="left:${center}%">${textGroup}${connector}${dot}</div>`
+        : `<div class="timeline-viz-label" data-block-id="${attrEscape(b.id)}" style="left:${center}%">${dot}${connector}${textGroup}</div>`;
+      (i % 2 === 0 ? aboveHtml : belowHtml).push(html);
+    });
+  }
+  els.aboveEl.innerHTML = aboveHtml.join("");
+  els.belowEl.innerHTML = vertical ? "" : belowHtml.join("");
+}
+
+function renderTimelineViz() {
+  if (!timelineVizTrackEl) return;
+
+  // While a block is being dragged the window is pinned. Recomputing it mid-drag
+  // would rescale the axis under the cursor and the block would run away.
+  const range = timelineVizFrozenRange || computeTimelineVizRange(timelineBlocks);
+  // The drag math reads the window off these globals.
+  TIMELINE_VIZ_START_MIN = range.start;
+  TIMELINE_VIZ_END_MIN = range.end;
+  TIMELINE_VIZ_SPAN_MIN = TIMELINE_VIZ_END_MIN - TIMELINE_VIZ_START_MIN;
+
+  renderDayViz({
+    blocks: timelineBlocks,
+    orientation: timelineOrientation,
+    range,
+    els: {
+      trackEl: timelineVizTrackEl,
+      aboveEl: timelineVizAboveEl,
+      belowEl: timelineVizBelowEl,
+      ticksEl: timelineVizTicksEl,
+    },
+    interactive: true,
+  });
+}
+
+function fmtTimelineClockMin(min) {
+  const h = Math.floor(min / 60) % 24;
+  const m = Math.round(min) % 60;
+  return fmtTimelineClock(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
+}
+
+const TIMELINE_VIZ_TICK_COUNT = 5;
+
+function renderVizTicks(ticksEl, range) {
+  if (!ticksEl) return;
+  const labels = [];
+  for (let i = 0; i < TIMELINE_VIZ_TICK_COUNT; i++) {
+    const min = range.start + ((range.end - range.start) * i) / (TIMELINE_VIZ_TICK_COUNT - 1);
+    labels.push(fmtTimelineClockMin(min));
+  }
+  ticksEl.innerHTML = labels.map((l) => `<span>${l}</span>`).join("");
+}
+
+function scheduleTimelineReorder(rowIdx) {
+  clearTimeout(timelineRenderTimer);
+  timelineRenderTimerRowIdx = rowIdx;
+  timelineRenderTimer = setTimeout(() => {
+    timelineRenderTimer = null;
+    timelineRenderTimerRowIdx = null;
+    renderTimeline();
+  }, 3000);
+}
+
+function wireTimelineInputs() {
+  timelineListEl.querySelectorAll(".timeline-input").forEach((input) => {
+    input.addEventListener("input", () => updateTimelineField(input));
+    if (input.dataset.field === "start" || input.dataset.field === "end") {
+      const rowIdx = input.closest(".timeline-block")?.dataset.idx;
+      // Leaving either time input on this block starts a 3s countdown to
+      // reorder the list. Re-entering EITHER time input on this SAME block
+      // before the countdown finishes cancels it, so editing start then end
+      // doesn't trigger a mid-edit reorder. Moving to this block's title,
+      // another block, or anywhere else does NOT cancel it — the countdown
+      // keeps running and reorders once 3s pass without touching these two
+      // fields again.
+      input.addEventListener("blur", () => scheduleTimelineReorder(rowIdx));
+      input.addEventListener("focus", () => {
+        if (timelineRenderTimer && rowIdx === timelineRenderTimerRowIdx) {
+          clearTimeout(timelineRenderTimer);
+          timelineRenderTimer = null;
+          timelineRenderTimerRowIdx = null;
+        }
+      });
+    }
+  });
+  timelineListEl.querySelectorAll(".timeline-delete").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      // Calendar rows carry no data-idx; Number(undefined) is NaN and
+      // splice(NaN, 1) would silently remove the first block instead.
+      const idx = Number(btn.dataset.idx);
+      if (!Number.isInteger(idx)) return;
+      if (timelineBlocks[idx]?.source === "calendar") return;
+      timelineBlocks.splice(idx, 1);
+      setTimelineDirty(true);
+      renderTimeline();
+    });
+  });
+}
+
+function updateTimelineField(input) {
+  const row = input.closest(".timeline-block");
+  const idx = Number(row.dataset.idx);
+  const field = input.dataset.field;
+  const block = timelineBlocks[idx];
+  if (!block) return;
+  if (block.source === "calendar") return; // owned by the sync, not editable here
+  if (field === "start" || field === "end") {
+    const valid = /^([01]\d|2[0-3]):[0-5]\d$/.test(input.value);
+    input.classList.toggle("invalid", !valid);
+    if (valid) {
+      block[field] = input.value;
+      const dur = row.querySelector(".timeline-duration");
+      if (dur) dur.textContent = timelineDurationLabel(block.start, block.end);
+      renderTimelineViz();
+    }
+  } else {
+    block[field] = input.value;
+    if (field === "title") {
+      const seg = timelineVizTrackEl.querySelector(`.timeline-viz-segment[data-block-id="${CSS.escape(block.id)}"]`);
+      if (seg) seg.title = `${block.title || "Untitled"} · ${fmtTimelineClock(block.start)}–${fmtTimelineClock(block.end)}`;
+      const label = document.querySelector(`.timeline-viz-label[data-block-id="${CSS.escape(block.id)}"] .timeline-viz-label-box`);
+      if (label) label.textContent = block.title || "Untitled";
+    }
+  }
+  setTimelineDirty(true);
+}
+
+// The week sweep always starts from today, so offering it while looking at some
+// other day would be misleading — it wouldn't touch the day on screen.
+function updateTimelineSyncWeekVisibility() {
+  if (!timelineSyncWeekBtn) return;
+  const shown = timelineLoadedDate || timelineDateInput.value;
+  timelineSyncWeekBtn.hidden = shown !== todayLocalISO();
+}
+
+function renderTimeline() {
+  clearTimeout(timelineRenderTimer);
+  timelineRenderTimer = null;
+  updateTimelineSyncWeekVisibility();
+  renderTimelineViz();
+  renderTimelineAllDay();
+  if (timelineBlocks.length === 0) {
+    timelineListEl.innerHTML = `<div class="empty">No blocks yet. Add one to start planning your day.</div>`;
+    return;
+  }
+  const ordered = timelineBlocks.map((b, i) => ({ b, i })).sort((a, b) => a.b.start.localeCompare(b.b.start));
+  timelineListEl.innerHTML = ordered.map(({ b, i }) => renderTimelineBlock(b, i)).join("");
+  wireTimelineInputs();
+  refreshTimelineButtons();
+}
+
+async function loadTimeline(date) {
+  const targetDate = date || timelineDateInput.value || todayLocalISO();
+  if (timelineDirty && timelineLoadedDate && targetDate !== timelineLoadedDate) {
+    if (!confirm(`Discard unsaved changes to ${timelineLoadedDate}?`)) {
+      timelineDateInput.value = timelineLoadedDate;
+      return;
+    }
+  }
+  timelineDateInput.value = targetDate;
+  timelineListEl.innerHTML = `<div class="empty">Loading…</div>`;
+  try {
+    const res = await fetch(`/api/timeline?date=${encodeURIComponent(targetDate)}`, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    timelineBlocks = (data.blocks || []).map((b) => ({ ...b }));
+    timelineAllDay = (data.allDay || []).map((a) => ({ ...a }));
+    timelineSavedSnapshot = timelineBlocks.map((b) => ({ ...b }));
+    timelineLoadedDate = targetDate;
+    timelineDirty = false;
+    renderTimeline();
+  } catch (err) {
+    timelineListEl.innerHTML = `<div class="empty">Failed to load: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function saveTimeline() {
+  if (timelineListEl.querySelector(".invalid")) return;
+  timelineSaveBtn.disabled = true;
+  try {
+    const res = await fetch("/api/timeline/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date: timelineLoadedDate, blocks: timelineBlocks }),
+    });
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { const body = await res.json(); if (body.error) msg = body.error; } catch {}
+      throw new Error(msg);
+    }
+    const data = await res.json();
+    timelineBlocks = (data.blocks || []).map((b) => ({ ...b }));
+    timelineAllDay = (data.allDay || []).map((a) => ({ ...a }));
+    timelineSavedSnapshot = timelineBlocks.map((b) => ({ ...b }));
+    timelineDirty = false;
+    renderTimeline();
+  } catch (err) {
+    alert("Save failed: " + err.message);
+  } finally {
+    refreshTimelineButtons();
+  }
+}
+
+function cancelTimeline() {
+  if (!timelineDirty) return;
+  timelineBlocks = timelineSavedSnapshot.map((b) => ({ ...b }));
+  timelineDirty = false;
+  renderTimeline();
+}
+
+timelinePrevBtn.addEventListener("click", () => loadTimeline(isoWithOffset(timelineDateInput.value || todayLocalISO(), -1)));
+timelineNextBtn.addEventListener("click", () => loadTimeline(isoWithOffset(timelineDateInput.value || todayLocalISO(), 1)));
+timelineTodayBtn.addEventListener("click", () => loadTimeline(todayLocalISO()));
+timelineDateInput.addEventListener("change", () => loadTimeline(timelineDateInput.value));
+timelineSaveBtn.addEventListener("click", saveTimeline);
+timelineCancelBtn.addEventListener("click", cancelTimeline);
+timelineAddBtn.addEventListener("click", () => {
+  const sorted = [...timelineBlocks].sort((a, b) => a.start.localeCompare(b.start));
+  const last = sorted[sorted.length - 1];
+  let start;
+  if (last) {
+    start = last.end;
+  } else {
+    const now = new Date();
+    const roundedMin = now.getMinutes() < 30 ? 30 : 0;
+    const h = now.getMinutes() < 30 ? now.getHours() : (now.getHours() + 1) % 24;
+    start = `${String(h).padStart(2, "0")}:${String(roundedMin).padStart(2, "0")}`;
+  }
+  const [sh, sm] = start.split(":").map(Number);
+  const end = `${String((sh + 1) % 24).padStart(2, "0")}:${String(sm).padStart(2, "0")}`;
+  timelineBlocks.push({
+    id: `b_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    start,
+    end,
+    title: "",
+    notes: "",
+  });
+  setTimelineDirty(true);
+  renderTimeline();
+  requestAnimationFrame(() => {
+    const idx = timelineBlocks.length - 1;
+    timelineListEl.querySelector(`.timeline-block[data-idx="${idx}"] .timeline-title`)?.focus();
+  });
+});
+
+timelineCalendarBtn.addEventListener("click", async () => {
+  const date = timelineLoadedDate || todayLocalISO();
+  if (timelineDirty && !confirm(`Discard unsaved changes to ${date} and refresh from calendar?`)) return;
+  const label = timelineCalendarBtn.textContent;
+  timelineCalendarBtn.disabled = true;
+  timelineCalendarBtn.textContent = "Syncing…";
+  try {
+    const res = await fetch("/api/timeline/refresh-calendar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    if (data.skipped) {
+      alert(`Calendar sync skipped: ${data.skipped}`);
+      return;
+    }
+    timelineDirty = false;
+    await loadTimeline(date);
+  } catch (err) {
+    alert("Calendar refresh failed: " + err.message);
+  } finally {
+    timelineCalendarBtn.disabled = false;
+    timelineCalendarBtn.textContent = label;
+  }
+});
+
+timelineSyncWeekBtn.addEventListener("click", async () => {
+  const date = timelineLoadedDate || todayLocalISO();
+  if (timelineDirty && !confirm(`Discard unsaved changes to ${date} and sync 7 days from the calendar?`)) return;
+  const label = timelineSyncWeekBtn.textContent;
+  timelineSyncWeekBtn.disabled = true;
+  timelineCalendarBtn.disabled = true;
+  timelineSyncWeekBtn.textContent = "Syncing 7 days…";
+  try {
+    // No date in the body = the same full-window sweep the hourly job runs.
+    const res = await fetch("/api/timeline/refresh-calendar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    const days = data.days || [];
+    const skipped = days.find((d) => d.skipped);
+    if (skipped) {
+      alert(`Calendar sync skipped: ${skipped.skipped}`);
+      return;
+    }
+    timelineDirty = false;
+    await loadTimeline(date);
+  } catch (err) {
+    alert("Calendar sync failed: " + err.message);
+  } finally {
+    timelineSyncWeekBtn.disabled = false;
+    timelineCalendarBtn.disabled = false;
+    timelineSyncWeekBtn.textContent = label;
+  }
+});
+
+timelineCopyBtn.addEventListener("click", () => {
+  timelineCopyPanel.hidden = !timelineCopyPanel.hidden;
+  if (!timelineCopyPanel.hidden) {
+    timelineCopyDateInput.value = isoWithOffset(timelineLoadedDate || todayLocalISO(), -1);
+    timelineCopyMsg.textContent = "";
+    timelineCopyMsg.className = "timeline-copy-msg";
+  }
+});
+
+timelineCopyCancelBtn.addEventListener("click", () => {
+  timelineCopyPanel.hidden = true;
+});
+
+timelineCopyConfirmBtn.addEventListener("click", async () => {
+  const sourceDate = timelineCopyDateInput.value;
+  if (!sourceDate) return;
+  if (sourceDate === timelineLoadedDate) {
+    timelineCopyMsg.textContent = "That's the current day.";
+    timelineCopyMsg.className = "timeline-copy-msg err";
+    return;
+  }
+  timelineCopyConfirmBtn.disabled = true;
+  timelineCopyMsg.textContent = "Loading…";
+  timelineCopyMsg.className = "timeline-copy-msg";
+  try {
+    const res = await fetch(`/api/timeline?date=${encodeURIComponent(sourceDate)}`, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const sourceBlocks = data.blocks || [];
+    if (sourceBlocks.length === 0) {
+      timelineCopyMsg.textContent = `No blocks found on ${sourceDate}.`;
+      timelineCopyMsg.className = "timeline-copy-msg err";
+      return;
+    }
+    if (timelineBlocks.length > 0 && !confirm(`Replace all ${timelineBlocks.length} block${timelineBlocks.length === 1 ? "" : "s"} on ${timelineLoadedDate} with ${sourceBlocks.length} block${sourceBlocks.length === 1 ? "" : "s"} from ${sourceDate}?`)) {
+      timelineCopyMsg.textContent = "";
+      return;
+    }
+    timelineBlocks = sourceBlocks.map((b) => {
+      // A copied block belongs to the new day, not to the source day's calendar
+      // event — drop the ownership marker so the sync treats it as Steve's.
+      const { source, calEventId, ...rest } = b;
+      return { ...rest, id: `b_${Date.now()}_${Math.random().toString(36).slice(2, 8)}` };
+    });
+    setTimelineDirty(true);
+    renderTimeline();
+    timelineCopyPanel.hidden = true;
+  } catch (err) {
+    timelineCopyMsg.textContent = "Failed: " + err.message;
+    timelineCopyMsg.className = "timeline-copy-msg err";
+  } finally {
+    timelineCopyConfirmBtn.disabled = false;
+  }
+});
+
+// ── Review (day recap) ────────────────────────────────
+// The counterpart to the planner: the same day chart plus what actually
+// happened that day — weather and spend. One /api/review request per day shown;
+// each source there fails soft, so a section can be empty on its own. Read-only.
+const reviewDateInput = document.getElementById("review-date-input");
+const reviewPrevBtn = document.getElementById("review-prev-btn");
+const reviewNextBtn = document.getElementById("review-next-btn");
+const reviewTodayBtn = document.getElementById("review-today-btn");
+const reviewOrientationBtn = document.getElementById("review-orientation-btn");
+const reviewAllDayEl = document.getElementById("review-allday");
+const reviewVizEl = document.getElementById("review-viz");
+const reviewVizTrackEl = document.getElementById("review-viz-track");
+const reviewVizAboveEl = document.getElementById("review-viz-above");
+const reviewVizBelowEl = document.getElementById("review-viz-below");
+const reviewVizTicksEl = document.getElementById("review-viz-ticks");
+const reviewTimelineEmptyEl = document.getElementById("review-timeline-empty");
+const reviewWeatherEl = document.getElementById("review-weather");
+const reviewWeatherSectionEl = document.getElementById("review-weather-section");
+const reviewExpensesEl = document.getElementById("review-expenses");
+const reviewExpensesSectionEl = document.getElementById("review-expenses-section");
+const reviewExpensesTotalEl = document.getElementById("review-expenses-total");
+
+let reviewDate = null;
+let reviewData = null;
+// The planner's orientation preference is shared — one setting for both charts.
+let reviewOrientation = timelineOrientation;
+
+function applyReviewOrientation() {
+  reviewVizEl.dataset.orientation = reviewOrientation;
+  const next = reviewOrientation === "horizontal" ? "vertical" : "horizontal";
+  reviewOrientationBtn.innerHTML = orientationToggleHtml(reviewOrientation);
+  reviewOrientationBtn.setAttribute("aria-label", `Switch to ${next} review view`);
+}
+applyReviewOrientation();
+
+function renderReviewAllDay(allDay) {
+  if (!allDay.length) {
+    reviewAllDayEl.hidden = true;
+    reviewAllDayEl.innerHTML = "";
+    return;
+  }
+  reviewAllDayEl.hidden = false;
+  reviewAllDayEl.innerHTML =
+    `<span class="timeline-allday-label">All-day</span>` +
+    allDay.map(() => `<span class="timeline-allday-pill"></span>`).join("");
+  // Titles come from the calendar — set as text so they can't inject markup.
+  const pills = reviewAllDayEl.querySelectorAll(".timeline-allday-pill");
+  allDay.forEach((a, i) => {
+    if (pills[i]) pills[i].textContent = a.title || "(untitled)";
+  });
+}
+
+function renderReviewViz() {
+  const blocks = reviewData?.timeline?.blocks || [];
+  reviewVizEl.hidden = blocks.length === 0;
+  reviewTimelineEmptyEl.hidden = blocks.length > 0;
+  // Reset the placeholder — a previous load may have left an error in it.
+  reviewTimelineEmptyEl.textContent = "Nothing planned for this day.";
+  if (!blocks.length) return;
+  renderDayViz({
+    blocks,
+    orientation: reviewOrientation,
+    range: computeTimelineVizRange(blocks),
+    els: {
+      trackEl: reviewVizTrackEl,
+      aboveEl: reviewVizAboveEl,
+      belowEl: reviewVizBelowEl,
+      ticksEl: reviewVizTicksEl,
+    },
+    interactive: false,
+  });
+}
+
+function renderReviewExpenses(expenses, error) {
+  const items = expenses?.items || [];
+  reviewExpensesTotalEl.textContent = items.length ? `$${(expenses.total || 0).toFixed(2)}` : "";
+  // Nothing posted and nothing broken — a day with no spending says more by
+  // leaving the section out than by printing "no expenses."
+  reviewExpensesSectionEl.hidden = !items.length && !error;
+  if (reviewExpensesSectionEl.hidden) return;
+  if (error) {
+    reviewExpensesEl.innerHTML = `<div class="empty">Couldn't load spending: ${escapeHtml(error)}</div>`;
+    return;
+  }
+  reviewExpensesEl.innerHTML = `
+    <div class="review-expenses">
+      ${items.map(() => `
+        <div class="review-expense-row">
+          <span class="review-expense-name"></span>
+          <span class="review-expense-cat"></span>
+          <span class="review-expense-amt"></span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+  // Merchant names come from the bank feed — set as text, never markup.
+  const rows = reviewExpensesEl.querySelectorAll(".review-expense-row");
+  items.forEach((it, i) => {
+    const row = rows[i];
+    if (!row) return;
+    row.querySelector(".review-expense-name").textContent = it.name;
+    row.querySelector(".review-expense-cat").textContent = fmtExpenseCategory(it.category);
+    row.querySelector(".review-expense-amt").textContent = `$${it.amount.toFixed(2)}`;
+  });
+}
+
+function fmtExpenseCategory(cat) {
+  if (!cat) return "";
+  return cat.replace(/_/g, " ").toLowerCase();
+}
+
+// Line-art weather glyphs, sized by the container's font-size.
+const WEATHER_SVG = {
+  sun: '<circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4"/>',
+  cloud: '<path d="M7.5 19h9.8a3.7 3.7 0 0 0 .5-7.4 5.6 5.6 0 0 0-10.7-1.3A4.4 4.4 0 0 0 7.5 19Z"/>',
+  partly: '<circle cx="8.4" cy="8" r="3"/><path d="M8.4 2.6v1.6M3 8H1.4M4.6 4.2 3.5 3.1M12.2 4.2l1.1-1.1M13.8 8.6h1.6"/><path d="M9.5 20h7.9a3.3 3.3 0 0 0 .4-6.6 5 5 0 0 0-9.5-1.1A3.9 3.9 0 0 0 9.5 20Z"/>',
+  rain: '<path d="M7.5 15.5h9.8a3.7 3.7 0 0 0 .5-7.4A5.6 5.6 0 0 0 7.1 6.8 4.4 4.4 0 0 0 7.5 15.5Z"/><path d="M9 18.5 8 21M13 18.5 12 21M17 18.5 16 21"/>',
+  snow: '<path d="M7.5 15.5h9.8a3.7 3.7 0 0 0 .5-7.4A5.6 5.6 0 0 0 7.1 6.8 4.4 4.4 0 0 0 7.5 15.5Z"/><path d="M9 19h.01M13 19h.01M17 19h.01M11 21.5h.01M15 21.5h.01"/>',
+  storm: '<path d="M7.5 14.5h9.8a3.7 3.7 0 0 0 .5-7.4A5.6 5.6 0 0 0 7.1 5.8 4.4 4.4 0 0 0 7.5 14.5Z"/><path d="m13 16-3 4h3.5L11 23.5"/>',
+  fog: '<path d="M8 12.5h9.3a3.5 3.5 0 0 0 .4-7 5.3 5.3 0 0 0-10.1-1.2A4.2 4.2 0 0 0 8 12.5Z"/><path d="M4 16h16M6 19.5h12"/>',
+};
+
+// Prefer the OpenWeather icon code; older CSV rows predate that column, so fall
+// back to reading the conditions text.
+function weatherGlyphType({ icon, conditions }) {
+  const byCode = { "01": "sun", "02": "partly", "03": "cloud", "04": "cloud", "09": "rain", 10: "rain", 11: "storm", 13: "snow", 50: "fog" }[
+    String(icon || "").slice(0, 2)
+  ];
+  const text = String(conditions || "").toLowerCase();
+  const byText =
+    /thunder|storm/.test(text) ? "storm" :
+    /snow|sleet|ice/.test(text) ? "snow" :
+    /rain|drizzle|shower/.test(text) ? "rain" :
+    /mist|fog|haze|smoke/.test(text) ? "fog" :
+    /few clouds|scattered|partly/.test(text) ? "partly" :
+    /cloud|overcast/.test(text) ? "cloud" :
+    /clear|sun/.test(text) ? "sun" : "cloud";
+  return byCode || byText;
+}
+
+// Every icon in the weather row is drawn on the same 24-box at the same size.
+function weatherSvg(shape) {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${shape}</svg>`;
+}
+
+const WEATHER_STAT_SVG = {
+  hi: '<path d="M12 19.5V5M6.5 10.5 12 5l5.5 5.5"/>',
+  lo: '<path d="M12 4.5V19M6.5 13.5 12 19l5.5-5.5"/>',
+  humidity: '<path d="M12 3.2c3.2 3.7 5.6 6.7 5.6 9.5a5.6 5.6 0 0 1-11.2 0c0-2.8 2.4-5.8 5.6-9.5Z"/>',
+  wind: '<path d="M3 8.5h11a3 3 0 1 0-3-3M3 12.5h15a3 3 0 1 1-3 3M3 16.5h7.5"/>',
+};
+
+function renderReviewWeather(weather, error) {
+  reviewWeatherSectionEl.hidden = !weather && !error;
+  if (reviewWeatherSectionEl.hidden) return;
+  if (error) {
+    reviewWeatherEl.innerHTML = `<div class="empty">Couldn't load weather: ${escapeHtml(error)}</div>`;
+    return;
+  }
+  const glyph = weatherGlyphType(weather);
+  const num = (v, suffix) => (Number.isFinite(v) ? `${v}${suffix}` : "—");
+  reviewWeatherEl.innerHTML = `
+    <div class="review-weather">
+      <span class="review-weather-stat cond" data-glyph="${glyph}">
+        ${weatherSvg(WEATHER_SVG[glyph])}<span class="cond-val"></span>
+      </span>
+      <span class="review-weather-stat hi" title="High">
+        ${weatherSvg(WEATHER_STAT_SVG.hi)}<span class="hi-val"></span>
+      </span>
+      <span class="review-weather-stat lo" title="Low">
+        ${weatherSvg(WEATHER_STAT_SVG.lo)}<span class="lo-val"></span>
+      </span>
+      <span class="review-weather-stat humidity" title="Humidity">
+        ${weatherSvg(WEATHER_STAT_SVG.humidity)}<span class="humidity-val"></span>
+      </span>
+      <span class="review-weather-stat wind" title="Wind">
+        ${weatherSvg(WEATHER_STAT_SVG.wind)}<span class="wind-val"></span>
+      </span>
+    </div>
+    <div class="review-weather-alert" hidden></div>
+  `;
+  const q = (sel) => reviewWeatherEl.querySelector(sel);
+  q(".cond-val").textContent = weather.conditions;
+  q(".hi-val").textContent = num(weather.high, "°");
+  q(".lo-val").textContent = num(weather.low, "°");
+  q(".humidity-val").textContent = num(weather.humidity, "%");
+  q(".wind-val").textContent = num(Number.isFinite(weather.wind) ? Math.round(weather.wind) : NaN, " mph");
+  if (weather.alerts) {
+    const alertEl = q(".review-weather-alert");
+    alertEl.hidden = false;
+    alertEl.textContent = weather.alerts;
+  }
+}
+
+function renderReview() {
+  if (!reviewData) return;
+  renderReviewAllDay(reviewData.timeline?.allDay || []);
+  renderReviewViz();
+
+
+  renderReviewWeather(reviewData.weather, reviewData.errors?.weather);
+
+  renderReviewExpenses(reviewData.expenses, reviewData.errors?.expenses);
+}
+
+async function loadReview(date) {
+  // An add panel left open on the way out is still dated to the day we left.
+  reviewDate = date;
+  reviewDateInput.value = date;
+  try {
+    const res = await fetch(`/api/review?date=${encodeURIComponent(date)}`, { cache: "no-store" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    if (reviewDate !== date) return; // a newer day was requested while this was in flight
+    reviewData = data;
+    renderReview();
+  } catch (err) {
+    reviewData = null;
+    reviewVizEl.hidden = true;
+    reviewTimelineEmptyEl.hidden = false;
+    reviewTimelineEmptyEl.textContent = `Failed to load: ${err.message}`;
+  }
+}
+
+reviewOrientationBtn.addEventListener("click", () => {
+  reviewOrientation = reviewOrientation === "horizontal" ? "vertical" : "horizontal";
+  applyReviewOrientation();
+  renderReviewViz();
+});
+
+reviewPrevBtn.addEventListener("click", () => loadReview(isoWithOffset(reviewDate || todayLocalISO(), -1)));
+reviewNextBtn.addEventListener("click", () => loadReview(isoWithOffset(reviewDate || todayLocalISO(), 1)));
+reviewTodayBtn.addEventListener("click", () => loadReview(todayLocalISO()));
+reviewDateInput.addEventListener("change", () => {
+  if (reviewDateInput.value) loadReview(reviewDateInput.value);
+});
 
 // ── Finances ─────────────────────────────────────────
 const financesListEl = document.getElementById("finances-list");
@@ -1310,6 +3073,423 @@ async function loadFinances() {
     renderFinances(data);
   } catch (err) {
     financesListEl.innerHTML = `<div class="empty">Failed to load: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+// ── API Usage ────────────────────────────────────────
+const apiUsageContentEl = document.getElementById("api-usage-content");
+const apiUsageCountEl = document.getElementById("api-usage-count");
+let apiUsageLastFetched = 0;
+let apiUsageData = null;
+let apiUsageSelectedMonth = null; // YYYY-MM, defaults to current
+
+function renderApiUsage(data) {
+  apiUsageData = data;
+  const { months, currentMonthCents } = data;
+  const sortedAsc = [...months].sort((a, b) => a.month.localeCompare(b.month));
+  const currentMonth = sortedAsc[sortedAsc.length - 1];
+  if (!apiUsageSelectedMonth || !sortedAsc.find(m => m.month === apiUsageSelectedMonth)) {
+    apiUsageSelectedMonth = currentMonth ? currentMonth.month : null;
+  }
+  const selected = sortedAsc.find(m => m.month === apiUsageSelectedMonth) || currentMonth;
+  const currentTotal = (currentMonthCents / 100).toFixed(2);
+  apiUsageCountEl.textContent = `$${currentTotal}`;
+
+  if (!selected) {
+    apiUsageContentEl.innerHTML = `<div class="empty">No usage data.</div>`;
+    return;
+  }
+
+  const days = selected.days || [];
+  const selectedTotal = (selected.totalCents / 100).toFixed(2);
+  const isCurrent = selected.month === (currentMonth && currentMonth.month);
+
+  let html = "";
+
+  // Selected month summary
+  html += `<div class="api-summary">`;
+  html += `<div class="api-summary-label">${escapeHtml(selected.label)}${isCurrent ? "" : " (historical)"}</div>`;
+  html += `<div class="api-summary-total">$${selectedTotal}</div>`;
+  html += `</div>`;
+
+  // Daily chart
+  if (days.length) {
+    const maxCents = Math.max(...days.map(d => d.cents), 1);
+    html += `<div class="api-section-label">Daily Breakdown</div>`;
+    html += `<div class="api-chart">`;
+    for (const day of days) {
+      const dollars = (day.cents / 100).toFixed(2);
+      const pct = (day.cents / maxCents) * 100;
+      const dayNum = new Date(day.date + "T12:00:00Z").getUTCDate();
+      const dayLabel = new Date(day.date + "T12:00:00Z").toLocaleDateString([], { weekday: "short" });
+      html += `<div class="api-bar-col" title="${day.date}: $${dollars}">`;
+      html += `<div class="api-bar-val">$${dollars}</div>`;
+      html += `<div class="api-bar-track"><div class="api-bar-fill" style="height:${Math.max(pct, 2)}%"></div></div>`;
+      html += `<div class="api-bar-label">${dayNum}</div>`;
+      html += `<div class="api-bar-day">${dayLabel}</div>`;
+      html += `</div>`;
+    }
+    html += `</div>`;
+  }
+
+  // Monthly history (descending) — clickable
+  const historyMonths = sortedAsc.filter(m => m.totalCents > 0).slice().reverse();
+  if (historyMonths.length) {
+    const maxMonthCents = Math.max(...historyMonths.map(m => m.totalCents), 1);
+    html += `<div class="api-section-label">Monthly History</div>`;
+    html += `<div class="api-history">`;
+    for (const m of historyMonths) {
+      const dollars = (m.totalCents / 100).toFixed(2);
+      const pct = (m.totalCents / maxMonthCents) * 100;
+      const sel = m.month === selected.month ? " selected" : "";
+      html += `<div class="api-history-row clickable${sel}" data-month="${escapeHtml(m.month)}" role="button" tabindex="0" title="View daily breakdown for ${escapeHtml(m.label)}">`;
+      html += `<div class="api-history-label">${m.label}</div>`;
+      html += `<div class="api-history-bar-wrap"><div class="api-history-bar" style="width:${Math.max(pct, 2)}%"></div></div>`;
+      html += `<div class="api-history-val">$${dollars}</div>`;
+      html += `</div>`;
+    }
+    html += `</div>`;
+  }
+
+  apiUsageContentEl.innerHTML = html;
+
+  apiUsageContentEl.querySelectorAll(".api-history-row[data-month]").forEach((row) => {
+    const select = () => {
+      apiUsageSelectedMonth = row.dataset.month;
+      renderApiUsage(apiUsageData);
+    };
+    row.addEventListener("click", select);
+    row.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(); }
+    });
+  });
+}
+
+async function loadApiUsage() {
+  if (Date.now() - apiUsageLastFetched < 120_000 && apiUsageContentEl.querySelector(".api-summary")) return;
+  if (!apiUsageContentEl.querySelector(".api-summary")) {
+    apiUsageContentEl.innerHTML = `<div class="empty">Loading…</div>`;
+  }
+  try {
+    const res = await fetch("/api/api-usage", { cache: "no-store" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    apiUsageLastFetched = Date.now();
+    renderApiUsage(data);
+  } catch (err) {
+    apiUsageContentEl.innerHTML = `<div class="empty">Failed to load: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+// ── Chat (dashapp-only, no Telegram) ──────────────────
+const chatListEl = document.getElementById("chat-list");
+const chatCountEl = document.getElementById("chat-count");
+let chatLoaded = false;
+let chatTotalCount = 0;
+let chatCurrentCount = 0;
+
+function scrollChatToBottom() {
+  if (currentTab !== "chat") return;
+  mainEl.scrollTop = mainEl.scrollHeight;
+}
+
+function scheduleScrollChatToBottom() {
+  if (currentTab !== "chat") return;
+  requestAnimationFrame(() => {
+    scrollChatToBottom();
+    requestAnimationFrame(scrollChatToBottom);
+  });
+  setTimeout(scrollChatToBottom, 100);
+  setTimeout(scrollChatToBottom, 350);
+}
+
+function renderChat(messages, total, { scrollToBottom = true } = {}) {
+  if (total != null) chatTotalCount = total;
+  chatCurrentCount = messages.length;
+  chatCountEl.textContent = messages.length ? `${messages.length}${chatTotalCount > messages.length ? " / " + chatTotalCount : ""}` : "";
+  if (messages.length === 0) {
+    chatListEl.innerHTML = `<div class="empty">No messages yet.</div>`;
+    return;
+  }
+  const loadMoreHtml = chatTotalCount > messages.length
+    ? `<button class="load-more-btn" id="load-more-chat">Load earlier messages</button>`
+    : "";
+  chatListEl.innerHTML = loadMoreHtml + messages
+    .map((m) => {
+      const cls = m.from === "user" ? "from-user" : "from-dash";
+      const who = m.from === "user" ? "You" : "Dash";
+      const when = m.ts ? new Date(m.ts).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+      return `<div class="msg ${cls}"><div class="msg-meta">${who}${when ? " · " + escapeHtml(when) : ""}</div><div class="msg-text"></div></div>`;
+    })
+    .join("");
+  const items = chatListEl.querySelectorAll(".msg-text");
+  messages.forEach((m, i) => {
+    const text = m.text || "";
+    items[i].innerHTML = window.marked ? window.marked.parse(text) : escapeHtml(text);
+  });
+  const loadMoreBtn = document.getElementById("load-more-chat");
+  if (loadMoreBtn) {
+    loadMoreBtn.addEventListener("click", () => loadMoreChat());
+  }
+  if (scrollToBottom) scheduleScrollChatToBottom();
+}
+
+async function loadMoreChat() {
+  const nextLimit = Math.min(chatCurrentCount + 50, chatTotalCount);
+  try {
+    const res = await fetch(`/api/chat?limit=${nextLimit}`, { cache: "no-store" });
+    if (!res.ok) return;
+    const data = await res.json();
+    renderChat(data.messages || [], data.total, { scrollToBottom: false });
+  } catch (err) {
+    console.error("Load more chat failed:", err);
+  }
+}
+
+async function loadChat() {
+  try {
+    const res = await fetch("/api/chat", { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    chatLoaded = true;
+    renderChat(data.messages || [], data.total);
+  } catch (err) {
+    chatListEl.innerHTML = `<div class="empty">Failed to load: ${err.message}</div>`;
+  }
+}
+
+function connectChatStream() {
+  const es = new EventSource("/api/chat/stream");
+  es.addEventListener("update", (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      chatLoaded = true;
+      renderChat(data.messages || [], data.total);
+    } catch (err) { console.error("chat stream parse error", err); }
+  });
+  es.addEventListener("error", () => { /* auto-reconnect */ });
+}
+connectChatStream();
+
+// ── Messages (Telegram history) ────────────────────────
+const messagesListEl = document.getElementById("messages-list");
+const messagesCountEl = document.getElementById("messages-count");
+let messagesLoaded = false;
+let messagesTotalCount = 0; // total messages on server
+let messagesCurrentCount = 0; // how many we're currently showing
+
+function scrollMessagesToBottom() {
+  // <main> is the scroll container now. Only scroll if the messages tab is
+  // actually visible — otherwise SSE background updates would hijack the
+  // scroll position of another tab.
+  if (currentTab !== "telegram") return;
+  mainEl.scrollTop = mainEl.scrollHeight;
+}
+
+// Schedule several scroll attempts to survive late layout shifts (font load,
+// sticky header settling, deep-link scroll restoration, etc.).
+function scheduleScrollMessagesToBottom() {
+  if (currentTab !== "telegram") return;
+  requestAnimationFrame(() => {
+    scrollMessagesToBottom();
+    requestAnimationFrame(scrollMessagesToBottom);
+  });
+  setTimeout(scrollMessagesToBottom, 100);
+  setTimeout(scrollMessagesToBottom, 350);
+}
+
+function renderMessages(messages, total, { scrollToBottom = true } = {}) {
+  if (total != null) messagesTotalCount = total;
+  messagesCurrentCount = messages.length;
+  messagesCountEl.textContent = messages.length ? `${messages.length}${messagesTotalCount > messages.length ? " / " + messagesTotalCount : ""}` : "";
+  if (messages.length === 0) {
+    messagesListEl.innerHTML = `<div class="empty">No messages yet.</div>`;
+    return;
+  }
+  // "Load more" button at top when there's more history
+  const loadMoreHtml = messagesTotalCount > messages.length
+    ? `<button class="load-more-btn" id="load-more-msgs">Load earlier messages</button>`
+    : "";
+  messagesListEl.innerHTML = loadMoreHtml + messages
+    .map((m) => {
+      const cls = m.from === "user" ? "from-user" : "from-dash";
+      const who = m.from === "user" ? "You" : "Dash";
+      const when = m.ts ? new Date(m.ts).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+      const imageHtml = m.image ? `<img src="${escapeHtml(m.image)}" class="msg-image" loading="lazy">` : "";
+      return `<div class="msg ${cls}"><div class="msg-meta">${who}${when ? " · " + escapeHtml(when) : ""}</div>${imageHtml}<div class="msg-text"></div></div>`;
+    })
+    .join("");
+  const items = messagesListEl.querySelectorAll(".msg-text");
+  messages.forEach((m, i) => {
+    const text = m.text || "";
+    items[i].innerHTML = window.marked ? window.marked.parse(text) : escapeHtml(text);
+  });
+  // Wire up "load more" button
+  const loadMoreBtn = document.getElementById("load-more-msgs");
+  if (loadMoreBtn) {
+    loadMoreBtn.addEventListener("click", () => loadMoreMessages());
+  }
+  // Scroll to newest — skip when user is browsing history
+  if (scrollToBottom) scheduleScrollMessagesToBottom();
+}
+
+async function loadMoreMessages() {
+  const nextLimit = Math.min(messagesCurrentCount + 50, messagesTotalCount);
+  try {
+    const res = await fetch(`/api/messages?limit=${nextLimit}`, { cache: "no-store" });
+    if (!res.ok) return;
+    const data = await res.json();
+    renderMessages(data.messages || [], data.total, { scrollToBottom: false });
+  } catch (err) {
+    console.error("Load more messages failed:", err);
+  }
+}
+
+async function loadMessages() {
+  try {
+    const res = await fetch("/api/messages", { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    messagesLoaded = true;
+    renderMessages(data.messages || [], data.total);
+  } catch (err) {
+    messagesListEl.innerHTML = `<div class="empty">Failed to load: ${err.message}</div>`;
+  }
+}
+
+function connectMessagesStream() {
+  const es = new EventSource("/api/messages/stream");
+  es.addEventListener("update", (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      messagesLoaded = true;
+      renderMessages(data.messages || [], data.total);
+    } catch (err) { console.error("messages stream parse error", err); }
+  });
+  es.addEventListener("error", () => { /* auto-reconnect */ });
+}
+
+// ── Reminders ──────────────────────────────────────────
+const remindersListEl = document.getElementById("reminders-list");
+const remindersCountEl = document.getElementById("reminders-count");
+let remindersReady = false;
+
+function formatReminderDue(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const tomorrow = new Date(now); tomorrow.setDate(tomorrow.getDate() + 1);
+  const isTomorrow = d.toDateString() === tomorrow.toDateString();
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const hasTime = !(d.getHours() === 0 && d.getMinutes() === 0);
+  if (sameDay) return hasTime ? `Today ${time}` : "Today";
+  if (isTomorrow) return hasTime ? `Tomorrow ${time}` : "Tomorrow";
+  const date = d.toLocaleDateString([], { month: "short", day: "numeric" });
+  return hasTime ? `${date} ${time}` : date;
+}
+
+function renderReminders(reminders) {
+  remindersCountEl.textContent = reminders.length ? `${reminders.length}` : "";
+  if (reminders.length === 0) {
+    remindersListEl.innerHTML = remindersReady
+      ? `<div class="empty">No tasks.</div>`
+      : `<div class="empty">Loading…</div>`;
+    return;
+  }
+  // Sort: overdue/dated first by date, then undated.
+  const sorted = [...reminders].sort((a, b) => {
+    if (a.dueDate && b.dueDate) return new Date(a.dueDate) - new Date(b.dueDate);
+    if (a.dueDate) return -1;
+    if (b.dueDate) return 1;
+    return 0;
+  });
+  remindersListEl.innerHTML = sorted
+    .map((r) => {
+      const due = formatReminderDue(r.dueDate);
+      const overdue = r.dueDate && new Date(r.dueDate) < new Date() ? " overdue" : "";
+      return `
+        <div class="reminder" data-id="${escapeHtml(r.id)}">
+          <button class="reminder-check" aria-label="Complete"></button>
+          <div class="reminder-body">
+            <div class="reminder-name"></div>
+            ${due ? `<div class="reminder-due${overdue}">${escapeHtml(due)}</div>` : ""}
+            ${r.body ? `<div class="reminder-notes"></div>` : ""}
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+  // Set text content (avoid HTML injection from reminder names/notes)
+  const items = remindersListEl.querySelectorAll(".reminder");
+  sorted.forEach((r, i) => {
+    items[i].querySelector(".reminder-name").textContent = r.name || "(untitled)";
+    const notesEl = items[i].querySelector(".reminder-notes");
+    if (notesEl) notesEl.textContent = r.body;
+    items[i].querySelector(".reminder-check").addEventListener("click", () => completeReminder(r.id, items[i]));
+  });
+}
+
+function connectRemindersStream() {
+  const es = new EventSource("/api/reminders/stream");
+  es.addEventListener("update", (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      remindersReady = !!data.ready;
+      remindersCountEl.classList.remove("refreshing");
+      renderReminders(data.reminders || []);
+    } catch (err) { console.error("reminders stream parse error", err); }
+  });
+  es.addEventListener("error", () => { /* auto-reconnect */ });
+}
+
+function refreshReminders() {
+  // Ask the server to re-fetch from Reminders.app. Result arrives via SSE.
+  remindersCountEl.classList.add("refreshing");
+  fetch("/api/reminders/refresh", { cache: "no-store" }).catch(() => {
+    remindersCountEl.classList.remove("refreshing");
+  });
+}
+
+// Live polling while the Reminders tab is active and the document is visible.
+// JXA call is ~10s so we poll at that interval; server de-dupes concurrent refreshes.
+let remindersPollTimer = null;
+function startRemindersPolling() {
+  if (remindersPollTimer) return;
+  refreshReminders();
+  remindersPollTimer = setInterval(refreshReminders, 10_000);
+}
+function stopRemindersPolling() {
+  if (remindersPollTimer) {
+    clearInterval(remindersPollTimer);
+    remindersPollTimer = null;
+  }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) stopRemindersPolling();
+  else if (currentTab === "reminders") startRemindersPolling();
+});
+
+async function completeReminder(id, el) {
+  if (el) el.classList.add("completing");
+  try {
+    const res = await fetch("/api/reminders/complete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    // Remove from DOM after a brief animation, refresh count.
+    setTimeout(() => {
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+      const remaining = remindersListEl.querySelectorAll(".reminder").length;
+      remindersCountEl.textContent = remaining ? `${remaining}` : "";
+      if (remaining === 0) remindersListEl.innerHTML = `<div class="empty">No tasks.</div>`;
+    }, 200);
+  } catch (err) {
+    if (el) el.classList.remove("completing");
+    console.error("Complete reminder failed:", err);
   }
 }
 
@@ -7385,6 +9565,8 @@ window.addEventListener("popstate", routeFromPath);
 })();
 
 connectLibraryStream();
+connectRemindersStream();
+connectMessagesStream();
 
 // ── Tab scroll hint ────────────────────────────────────
 (function setupTabsScroll() {
