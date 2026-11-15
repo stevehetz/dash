@@ -29,7 +29,10 @@ export function createJob({ name, interval, fn, runOnStart = false, sequential =
     try {
       await fn();
     } catch (err) {
-      console.error(`  ❌ Job "${name}" failed:`, err.message);
+      // Network errors (node-fetch FetchError) often carry an empty reason —
+      // the useful bit is the code (ETIMEDOUT, ECONNRESET, ENOTFOUND…).
+      const code = err.code || err.cause?.code;
+      console.error(`  ❌ Job "${name}" failed:`, err.message + (code ? ` [${code}]` : ""));
     } finally {
       running = false;
     }

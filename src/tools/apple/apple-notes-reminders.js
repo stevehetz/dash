@@ -5,6 +5,7 @@ const exec = promisify(execFile);
 
 const TIMEOUT = 30000;
 const TIMEOUT_LONG = 90000;
+const TIMEOUT_BULK = 5 * 60 * 1000;
 
 /**
  * Run a JXA (JavaScript for Automation) script via osascript.
@@ -16,6 +17,9 @@ async function runJxa(script, timeout = TIMEOUT) {
     });
     return stdout.trim();
   } catch (err) {
+    if (err.killed) {
+      throw new Error(`osascript timed out after ${timeout / 1000}s (killed by ${err.signal})`);
+    }
     const stderr = (err.stderr || "").trim();
     if (stderr) {
       const wrapped = new Error(`osascript failed: ${stderr}`);
@@ -211,35 +215,35 @@ export async function snapshotReminders() {
       }
     }
     JSON.stringify(results);
-  `, TIMEOUT_LONG);
+  `, TIMEOUT_BULK);
   return JSON.parse(raw);
 }
 
 /**
  * Delete completed reminders older than the given number of days.
  * Returns the count of deleted reminders.
+ *
+ * Reminders' scripting bridge is very slow (~10-30s per bulk query on a list of
+ * a few hundred), so this issues one filtered delete per list instead of
+ * fetching properties and deleting reminders one by one — the old per-item loop
+ * blew past the timeout once a couple hundred completed reminders piled up.
  */
 export async function cleanupCompletedReminders(olderThanDays = 7) {
   const raw = await runJxa(`
     const app = Application("Reminders");
     const cutoff = new Date(Date.now() - ${olderThanDays} * 86400000);
-    const lists = app.lists();
+    const filter = ${olderThanDays} > 0
+      ? { _and: [{ completed: true }, { completionDate: { _lessThan: cutoff } }] }
+      : { completed: true };
     let deleted = 0;
-    for (const list of lists) {
-      const completed = list.reminders.completed();
-      const dates = list.reminders.completionDate();
-      const toDelete = [];
-      for (let i = completed.length - 1; i >= 0; i--) {
-        if (completed[i] && dates[i] && dates[i] < cutoff) {
-          toDelete.push(i);
-        }
-      }
-      for (const idx of toDelete) {
-        app.delete(list.reminders[idx]);
-        deleted++;
-      }
+    for (const list of app.lists()) {
+      const matches = list.reminders.whose(filter);
+      const count = matches.id().length;
+      if (count === 0) continue;
+      app.delete(matches);
+      deleted += count;
     }
     JSON.stringify({ deleted });
-  `, TIMEOUT_LONG);
+  `, TIMEOUT_BULK);
   return JSON.parse(raw);
 }
