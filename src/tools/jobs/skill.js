@@ -22,7 +22,9 @@ function createHandler() {
   return async () => {};
 }
 
-async function readSystemConfig() {
+// strict: throw on a missing/unparseable file instead of falling back to
+// defaults — used by the live poll, so a half-synced file can't re-enable jobs.
+async function readSystemConfig({ strict = false } = {}) {
   try {
     let configPath = SYSTEM_CONFIG_PATHS[0];
     for (const path of SYSTEM_CONFIG_PATHS) {
@@ -36,7 +38,8 @@ async function readSystemConfig() {
     }
     const raw = await readFile(configPath, "utf-8");
     return JSON.parse(raw);
-  } catch {
+  } catch (err) {
+    if (strict) throw err;
     return { jobs: {} };
   }
 }
@@ -50,30 +53,78 @@ function getInterval(jobs, name) {
   return seconds != null ? seconds * 1000 : undefined;
 }
 
+// How often to check JOBS_SYSTEM.json for changes. A stat per tick is cheap,
+// and polling (unlike fs.watch) is reliable on the OneDrive-synced folder.
+const CONFIG_POLL_MS = 10 * 1000;
+
 /**
  * Start all system background jobs.
- * Reads JOBS_SYSTEM.json to determine which jobs are enabled.
+ * Reads JOBS_SYSTEM.json to determine which jobs are enabled, then keeps
+ * watching it: toggling a job or changing its interval in the file (e.g. from
+ * the dashapp's System page) stops/starts just that job — no bot restart.
  * Called by index.js after the bot is ready.
  */
 async function start({ agent, userId, bot, deliver, googleCalendarManager, dashbotGmailManager, gmailManager, personalGmailManager }) {
-  const config = await readSystemConfig();
-  const jobs = config.jobs || {};
-  const stops = [];
+  // Order matters on boot: tasks-snapshot runs ahead of reminder-cleanup, since
+  // the snapshot is what preserves completed tasks before cleanup deletes them.
+  const starters = {
+    "tasks-snapshot": (interval) => startTasksSnapshot({ interval }),
+    "reminder-cleanup": (interval) => startReminderCleanup({ interval }),
+    "calendar-cache": (interval) => startCalendarCache({ googleCalendarManager, interval }),
+    "inbox-poll": (interval) => startInboxPoll({ dashbotGmailManager, agent, userId, deliver, interval }),
+    "email-dig": (interval) => startEmailDig({ gmailManager, personalGmailManager, userId, deliver, interval }),
+    "dynamic-jobs": (interval) => startDynamicJobsRunner(agent, userId, deliver, interval),
+    "pnc-csv-export": (interval) => startPncCsvExport({ interval }),
+    "weather-csv-export": (interval) => startWeatherCsvExport({ interval }),
+    "calendar-history": (interval) => startCalendarHistoryExport({ interval }),
+    "calendar-planner-sync": (interval) => startCalendarPlannerSync({ interval }),
+  };
 
-  // Ahead of reminder-cleanup: the snapshot is what preserves completed tasks
-  // before cleanup deletes them.
-  if (isEnabled(jobs, "tasks-snapshot")) stops.push(startTasksSnapshot({ interval: getInterval(jobs, "tasks-snapshot") }));
-  if (isEnabled(jobs, "reminder-cleanup")) stops.push(startReminderCleanup({ interval: getInterval(jobs, "reminder-cleanup") }));
-  if (isEnabled(jobs, "calendar-cache")) stops.push(startCalendarCache({ googleCalendarManager, interval: getInterval(jobs, "calendar-cache") }));
-  if (isEnabled(jobs, "inbox-poll")) stops.push(startInboxPoll({ dashbotGmailManager, agent, userId, deliver, interval: getInterval(jobs, "inbox-poll") }));
-  if (isEnabled(jobs, "email-dig")) stops.push(startEmailDig({ gmailManager, personalGmailManager, userId, deliver, interval: getInterval(jobs, "email-dig") }));
-  if (isEnabled(jobs, "dynamic-jobs")) stops.push(startDynamicJobsRunner(agent, userId, deliver, getInterval(jobs, "dynamic-jobs")));
-  if (isEnabled(jobs, "pnc-csv-export")) stops.push(startPncCsvExport({ interval: getInterval(jobs, "pnc-csv-export") }));
-  if (isEnabled(jobs, "weather-csv-export")) stops.push(startWeatherCsvExport({ interval: getInterval(jobs, "weather-csv-export") }));
-  if (isEnabled(jobs, "calendar-history")) stops.push(startCalendarHistoryExport({ interval: getInterval(jobs, "calendar-history") }));
-  if (isEnabled(jobs, "calendar-planner-sync")) stops.push(startCalendarPlannerSync({ interval: getInterval(jobs, "calendar-planner-sync") }));
+  // name -> { stop, key }, where key captures the settings it was started with.
+  const running = new Map();
 
-  return () => stops.forEach((stop) => stop());
+  function apply(jobs, { log }) {
+    for (const [name, startJob] of Object.entries(starters)) {
+      const enabled = isEnabled(jobs, name);
+      const interval = getInterval(jobs, name);
+      const key = `${enabled}:${interval ?? "default"}`;
+      const current = running.get(name);
+      if (current?.key === key) continue;
+
+      if (current) {
+        current.stop();
+        running.delete(name);
+      }
+      if (enabled) {
+        running.set(name, { stop: startJob(interval), key });
+        if (log) console.log(`   🔁 Job "${name}" ${current ? "restarted" : "started"} (config change)`);
+      } else if (log && current) {
+        console.log(`   ⏹️  Job "${name}" stopped (config change)`);
+      }
+    }
+  }
+
+  let lastRaw = JSON.stringify(await readSystemConfig());
+  apply(JSON.parse(lastRaw).jobs || {}, { log: false });
+
+  const poll = setInterval(async () => {
+    let config;
+    try {
+      config = await readSystemConfig({ strict: true });
+    } catch {
+      return; // unreadable mid-sync; keep current jobs and retry next tick
+    }
+    const raw = JSON.stringify(config);
+    if (raw === lastRaw) return;
+    lastRaw = raw;
+    apply(config.jobs || {}, { log: true });
+  }, CONFIG_POLL_MS);
+
+  return () => {
+    clearInterval(poll);
+    for (const { stop } of running.values()) stop();
+    running.clear();
+  };
 }
 
 export default { name: "jobs", tools, systemPrompt, createHandler, start };
