@@ -15,7 +15,9 @@ import { z } from "zod";
 import { promisify } from "node:util";
 import { execFile as _execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { existsSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, delimiter } from "node:path";
 
 const execFile = promisify(_execFile);
 
@@ -27,11 +29,32 @@ const PROCESSES = ["dash-bot", "dash-voice", "dash-tailscale"];
 const MAX_TEXT = 16000;
 const PM2_BUF = { maxBuffer: 8 * 1024 * 1024 };
 
+// This server may run under a different node (e.g. Homebrew) than the one pm2 was
+// installed with (nvm), so a bare "pm2" isn't on PATH. Resolve it explicitly:
+// $PM2_BIN, then PATH, then the newest nvm install that has pm2.
+function resolvePm2() {
+  if (process.env.PM2_BIN && existsSync(process.env.PM2_BIN)) return process.env.PM2_BIN;
+  for (const dir of (process.env.PATH || "").split(delimiter)) {
+    if (dir && existsSync(join(dir, "pm2"))) return join(dir, "pm2");
+  }
+  const nvmRoot = join(process.env.NVM_DIR || join(homedir(), ".nvm"), "versions", "node");
+  try {
+    const versions = readdirSync(nvmRoot)
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+    for (const v of versions) {
+      const bin = join(nvmRoot, v, "bin", "pm2");
+      if (existsSync(bin)) return bin;
+    }
+  } catch {}
+  return "pm2";
+}
+const PM2 = resolvePm2();
+
 const text = (s) => ({ content: [{ type: "text", text: String(s).slice(0, MAX_TEXT) }] });
 
 async function pm2Logs(service, lines) {
   const { stdout } = await execFile(
-    "pm2",
+    PM2,
     ["logs", service, "--nostream", "--lines", String(lines)],
     PM2_BUF,
   );
@@ -48,7 +71,7 @@ server.registerTool(
   },
   async () => {
     try {
-      const { stdout } = await execFile("pm2", ["jlist"], PM2_BUF);
+      const { stdout } = await execFile(PM2, ["jlist"], PM2_BUF);
       const rows = JSON.parse(stdout)
         .filter((p) => p.name?.startsWith("dash-"))
         .map((p) => {
@@ -150,8 +173,8 @@ server.registerTool(
   },
   async ({ service }) => {
     try {
-      await execFile("pm2", ["restart", service], PM2_BUF);
-      const { stdout } = await execFile("pm2", ["jlist"], PM2_BUF);
+      await execFile(PM2, ["restart", service], PM2_BUF);
+      const { stdout } = await execFile(PM2, ["jlist"], PM2_BUF);
       const p = JSON.parse(stdout).find((x) => x.name === service);
       const e = p?.pm2_env || {};
       const up = e.pm_uptime ? Math.round((Date.now() - e.pm_uptime) / 1000) : 0;

@@ -1,5 +1,15 @@
+import { readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createJob } from "./create-job.js";
 import { listEventsRaw } from "../apple/apple-calendar.js";
+
+// The bot's cache lives in its process memory, but the agent reaches tools via
+// `node tools.js call …` — a fresh process with a cold cache, which then falls
+// back to a full JXA scan of Calendar.app (minutes) and times out. So the bot
+// also writes each refresh to disk, and cold processes read that snapshot.
+const SNAPSHOT_PATH = join(dirname(fileURLToPath(import.meta.url)), "../../../data/calendar-cache.json");
+const SNAPSHOT_MAX_AGE_MS = 30 * 60 * 1000;
 
 /** In-memory unified calendar cache */
 let cachedEvents = [];
@@ -105,6 +115,35 @@ async function refreshCache() {
 
   cachedEvents = all;
   cacheTimestamp = Date.now();
+  writeSnapshot();
+}
+
+function writeSnapshot() {
+  try {
+    mkdirSync(dirname(SNAPSHOT_PATH), { recursive: true });
+    const tmp = `${SNAPSHOT_PATH}.tmp`;
+    writeFileSync(tmp, JSON.stringify({ timestamp: cacheTimestamp, events: cachedEvents }));
+    renameSync(tmp, SNAPSHOT_PATH);
+  } catch (err) {
+    console.error("  ❌ Calendar cache: snapshot write failed:", err.message);
+  }
+}
+
+/**
+ * In a process whose in-memory cache is cold (e.g. `tools.js call`), load the
+ * bot's on-disk snapshot if it's recent. Returns true if a usable cache is loaded.
+ */
+export function loadCalendarSnapshot() {
+  if (cacheTimestamp > 0) return true;
+  try {
+    const { timestamp, events } = JSON.parse(readFileSync(SNAPSHOT_PATH, "utf8"));
+    if (!timestamp || !Array.isArray(events) || Date.now() - timestamp > SNAPSHOT_MAX_AGE_MS) return false;
+    cachedEvents = events;
+    cacheTimestamp = timestamp;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 let refreshInFlight = null;

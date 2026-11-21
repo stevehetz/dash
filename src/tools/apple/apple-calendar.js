@@ -358,10 +358,11 @@ export async function listCalendars() {
 
 export async function listEvents(calendarName, startDate, endDate) {
   // Lazy import to avoid circular dependency with calendar-cache
-  const { getCachedEvents, getCacheTimestamp } = await import("../jobs/calendar-cache.js");
+  const { getCachedEvents, loadCalendarSnapshot } = await import("../jobs/calendar-cache.js");
 
-  // Use the unified cache if it's been populated — returns events from all sources
-  if (getCacheTimestamp() > 0) {
+  // Use the unified cache if it's been populated (in-process, or the bot's
+  // on-disk snapshot when running via tools.js) — returns events from all sources
+  if (loadCalendarSnapshot()) {
     return getCachedEvents({
       startDate,
       endDate,
